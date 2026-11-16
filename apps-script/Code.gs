@@ -1,0 +1,403 @@
+/**
+ * Teamwork Work Tracker - Google Sheets backend (Google Apps Script web app)
+ *
+ * Every user, project and task lives in this Google Sheet:
+ *   Users           one row per employee (User ID, Name, Active, name of their own tab)
+ *   <employee tabs> one tab per employee, named after the employee - their tasks and progress
+ *   Projects / Subtasks / CommonSubtasks / UpdateLog   shared lists
+ *   Config          the admin password (type it in the Value cell; it is scrambled after first login)
+ *
+ * Only the admin has a password. Employees sign in with their User ID only.
+ */
+const SHEET_ID = "";            // leave empty when this script was opened from the sheet (Extensions > Apps Script)
+const TZ = "Asia/Kolkata";
+const STATUSES = ["Pending", "In progress", "Done", "Delayed"];
+const H = {
+  Users: ["UserID", "Name", "Role", "Active", "SheetName", "Created"],
+  Config: ["Setting", "Value"],
+  Projects: ["Project"],
+  Subtasks: ["SubtaskID", "Project", "Name"],
+  CommonSubtasks: ["Name"],
+  UpdateLog: ["Date", "UserID", "TaskID", "Status", "Pending", "CurrentWork"],
+};
+const TASK_H = ["Type", "ID", "Project", "Subtask", "Assigned", "Due", "Status", "Started", "Completed", "Updated", "Notes"];
+const SESSION_SECONDS = 21600; // 6 hours (Apps Script cache maximum)
+
+/* ------------------------------------------------------------------ */
+/* Run this ONCE from the editor (select "setup" > Run) to authorize and create the tabs. */
+function setup() {
+  Object.keys(H).forEach(function (n) { sheet_(n, H[n]); });
+  const cfg = sheet_("Config", H.Config);
+  const rows = read_(cfg);
+  if (!rows.some(function (r) { return r.Setting === "AdminPassword"; })) cfg.appendRow(["AdminPassword", ""]);
+  if (!rows.some(function (r) { return r.Setting === "Help"; })) {
+    cfg.appendRow(["Help", "Type your admin password (10+ characters) in the Value cell next to AdminPassword. It is scrambled automatically the first time you sign in. To change it later, type a new one here."]);
+  }
+  return "Setup complete. Now type the admin password in Config > AdminPassword > Value.";
+}
+
+function doGet() {
+  return out_({ ok: true, service: "Teamwork Work Tracker", note: "Use the website to sign in." });
+}
+
+function doPost(e) {
+  let result;
+  const lock = LockService.getScriptLock();
+  let locked = false;
+  try {
+    const req = JSON.parse((e && e.postData && e.postData.contents) || "{}");
+    const action = String(req.action || "");
+    if (action !== "state") { lock.waitLock(25000); locked = true; }
+    const data = req.data && typeof req.data === "object" && !Array.isArray(req.data) ? req.data : {};
+    result = handle_(action, data, String(req.token || ""));
+  } catch (err) {
+    console.error(err && err.stack ? err.stack : err);
+    result = fail_(String(err && err.message).indexOf("lock") >= 0 ? "Server is busy. Try again." : "Something went wrong. Try again.", 500);
+  } finally {
+    if (locked) { try { lock.releaseLock(); } catch (x) { /* ignore */ } }
+  }
+  return out_(result);
+}
+
+/* ---------------------------- helpers ---------------------------- */
+function out_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
+function fail_(msg, status) { return { error: msg, status: status || 400 }; }
+function ok_(data) { return { data: data || {} }; }
+function ss_() {
+  const active = SpreadsheetApp.getActiveSpreadsheet();
+  if (active) return active;
+  if (!SHEET_ID) throw new Error("Set SHEET_ID at the top of Code.gs (or create the script from the sheet).");
+  return SpreadsheetApp.openById(SHEET_ID);
+}
+function today_() { return Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd"); }
+function str_(v) { return v instanceof Date ? Utilities.formatDate(v, TZ, "yyyy-MM-dd") : (v === null || v === undefined ? "" : String(v)); }
+function clean_(v, max) { return typeof v === "string" ? v.trim().slice(0, max) : ""; }
+function lc_(v) { return String(v || "").toLowerCase(); }
+
+function sheet_(name, headers) {
+  const ss = ss_();
+  let sh = ss.getSheetByName(name);
+  if (!sh) {
+    sh = ss.insertSheet(name);
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight("bold");
+    sh.setFrozenRows(1);
+    sh.getRange(1, 1, sh.getMaxRows(), headers.length).setNumberFormat("@"); // keep everything as plain text
+  }
+  return sh;
+}
+function read_(sh) {
+  const last = sh.getLastRow(), cols = sh.getLastColumn();
+  if (last < 2 || cols < 1) return [];
+  const vals = sh.getRange(1, 1, last, cols).getValues();
+  const head = vals[0].map(str_);
+  return vals.slice(1).map(function (r, i) {
+    const o = { _row: i + 2 };
+    head.forEach(function (h, j) { o[h] = str_(r[j]); });
+    return o;
+  }).filter(function (o) { return head.some(function (h) { return o[h] !== ""; }); });
+}
+function put_(sh, headers, o) { sh.getRange(o._row, 1, 1, headers.length).setValues([headers.map(function (h) { return o[h] === undefined ? "" : o[h]; })]); }
+function append_(sh, headers, o) { sh.appendRow(headers.map(function (h) { return o[h] === undefined ? "" : o[h]; })); }
+function deleteRows_(sh, rows) { rows.map(function (r) { return r._row; }).sort(function (a, b) { return b - a; }).forEach(function (n) { sh.deleteRow(n); }); }
+function nextId_() {
+  const p = PropertiesService.getScriptProperties();
+  const n = Number(p.getProperty("nextId") || "0") + 1;
+  p.setProperty("nextId", String(n));
+  return n;
+}
+function tabName_(base, id) {
+  const taken = ss_().getSheets().map(function (s) { return lc_(s.getName()); });
+  const reserved = Object.keys(H).map(lc_);
+  let tab = String(base || "").replace(/[\[\]\*\?:\/\\]/g, "-").trim().slice(0, 60) || id;
+  if (taken.indexOf(lc_(tab)) >= 0 || reserved.indexOf(lc_(tab)) >= 0) tab = (tab + " (" + id + ")").slice(0, 95);
+  let n = 2, candidate = tab;
+  while (taken.indexOf(lc_(candidate)) >= 0) candidate = tab + " " + (n++);
+  return candidate;
+}
+function throttle_(key, max) {
+  const c = CacheService.getScriptCache();
+  const n = Number(c.get(key) || 0);
+  if (n >= max) return false;
+  c.put(key, String(n + 1), 60);
+  return true;
+}
+function hex_(bytes) { return bytes.map(function (b) { return ("0" + (b & 255).toString(16)).slice(-2); }).join(""); }
+function hash_(pw, salt) {
+  salt = salt || Utilities.getUuid().replace(/-/g, "");
+  return "sha256:" + salt + ":" + hex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + pw, Utilities.Charset.UTF_8));
+}
+function adminRow_() {
+  const cfg = sheet_("Config", H.Config);
+  let row = read_(cfg).filter(function (r) { return r.Setting === "AdminPassword"; })[0];
+  if (!row) { cfg.appendRow(["AdminPassword", ""]); row = read_(cfg).filter(function (r) { return r.Setting === "AdminPassword"; })[0]; }
+  return { cfg: cfg, row: row };
+}
+/** returns true / false / "unset" */
+function checkAdmin_(pw) {
+  const a = adminRow_(), stored = a.row.Value;
+  if (!stored) return "unset";
+  if (stored.indexOf("sha256:") === 0) return hash_(pw, stored.split(":")[1]) === stored;
+  if (pw === stored) { a.cfg.getRange(a.row._row, 2).setValue(hash_(pw)); return true; } // scramble the typed password
+  return false;
+}
+function userSheet_(u) {
+  let sh = ss_().getSheetByName(u.SheetName);
+  if (!sh) {
+    sh = sheet_(u.SheetName, TASK_H);
+  }
+  return sh;
+}
+
+/* ------------------------------ api ------------------------------ */
+function login_(d) {
+  const id = lc_(clean_(d.id, 40));
+  const pw = typeof d.password === "string" && d.password.length <= 200 ? d.password : "";
+  if (!id) return fail_("Enter your user ID.", 400);
+  if (!throttle_("a_all", 60) || !throttle_("a_" + id.replace(/[^a-z0-9._-]/g, "_"), 12)) return fail_("Too many attempts. Try again in one minute.", 429);
+  let sid;
+  if (id === "admin") {
+    const good = checkAdmin_(pw);
+    if (good === "unset") return fail_("Admin password is not set. Open the Config tab in your sheet and type it next to AdminPassword.", 401);
+    if (!good) return fail_("Invalid user ID or password.", 401);
+    sid = "admin";
+  } else {
+    const u = read_(sheet_("Users", H.Users)).filter(function (r) { return r.UserID === id && r.Role === "employee" && r.Active === "1"; })[0];
+    if (!u) return fail_("Invalid user ID.", 401);
+    sid = u.UserID;
+  }
+  const token = Utilities.getUuid().replace(/-/g, "") + Utilities.getUuid().replace(/-/g, "");
+  const cache = CacheService.getScriptCache();
+  cache.put("s_" + token, sid, SESSION_SECONDS);
+  cache.remove("a_" + id.replace(/[^a-z0-9._-]/g, "_"));
+  return ok_({ token: token });
+}
+
+function me_(sid) {
+  if (sid === "admin") return { id: "admin", name: "Administrator", role: "admin" };
+  const u = read_(sheet_("Users", H.Users)).filter(function (r) { return r.UserID === sid && r.Role === "employee" && r.Active === "1"; })[0];
+  return u ? { id: u.UserID, name: u.Name, role: "employee", SheetName: u.SheetName } : null;
+}
+
+function handle_(action, d, token) {
+  if (action === "login") return login_(d);
+  const cache = CacheService.getScriptCache();
+  const sid = token ? cache.get("s_" + token) : null;
+  const me = sid ? me_(sid) : null;
+  if (!me) return fail_("Sign in to continue.", 401);
+  const admin = me.role === "admin";
+  const today = today_();
+
+  if (action === "state") return ok_(state_(me, today));
+  if (action === "logout") { cache.remove("s_" + token); return ok_(); }
+  if (action === "password") {
+    if (!admin) return fail_("Employees sign in with their user ID only. There is no password to change.", 403);
+    const current = typeof d.current === "string" ? d.current : "";
+    if (checkAdmin_(current) !== true) return fail_("Current password is incorrect.", 400);
+    const pw = typeof d.password === "string" ? d.password : "";
+    if (pw.length < 10 || pw.length > 200) return fail_("Enter a new password of 10 to 200 characters.", 400);
+    const a = adminRow_();
+    a.cfg.getRange(a.row._row, 2).setValue(hash_(pw));
+    return ok_();
+  }
+
+  /* ---------- employee actions ---------- */
+  if (action === "update" || action === "batch") {
+    if (admin) return fail_("Only employees can update their task progress.", 403);
+    const list = action === "batch" ? d.updates : [d];
+    if (!Array.isArray(list) || !list.length || list.length > 200) return fail_("Check the selected task updates.", 400);
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i];
+      if (!it || typeof it !== "object" || !/^\d{1,9}$/.test(String(it.id)) || STATUSES.indexOf(it.status) < 0 ||
+          typeof it.note !== "string" || it.note.length > 3000 ||
+          (it.pending !== undefined && (typeof it.pending !== "string" || it.pending.length > 3000))) return fail_("Check the selected task updates.", 400);
+      if (it.project !== undefined) return fail_("Project changes are unavailable in task updates.", 403);
+    }
+    const sh = userSheet_(me), rows = read_(sh);
+    const targets = list.map(function (it) {
+      return rows.filter(function (r) { return r.Type === "Task" && r.ID === String(Number(it.id)); })[0];
+    });
+    if (targets.some(function (t) { return !t; })) return fail_("One or more tasks are unavailable.", 404);
+    const log = sheet_("UpdateLog", H.UpdateLog);
+    list.forEach(function (it, i) {
+      const t = targets[i], pending = (it.pending || "").trim(), note = it.note.trim();
+      t.Status = it.status;
+      t.Notes = [pending ? "Pending: " + pending : "", note].filter(Boolean).join("\n");
+      t.Updated = today;
+      if (it.status === "In progress" || it.status === "Done") t.Started = t.Started || today;
+      t.Completed = it.status === "Done" ? (t.Completed || today) : "";
+      put_(sh, TASK_H, t);
+      append_(log, H.UpdateLog, { Date: today, UserID: me.id, TaskID: t.ID, Status: it.status, Pending: pending, CurrentWork: note });
+    });
+    return ok_();
+  }
+
+  if (action === "subtask/progress") {
+    if (admin) return fail_("Only employees can update subtask progress.", 403);
+    const status = clean_(d.status, 20);
+    if (STATUSES.indexOf(status) < 0) return fail_("Choose a status.", 400);
+    if (!/^\d{1,9}$/.test(String(d.id)) || !/^\d{1,9}$/.test(String(d.task_id))) return fail_("Subtask unavailable.", 404);
+    const sub = read_(sheet_("Subtasks", H.Subtasks)).filter(function (r) { return r.SubtaskID === String(Number(d.id)); })[0];
+    const sh = userSheet_(me), rows = read_(sh);
+    const task = rows.filter(function (r) { return r.Type === "Task" && r.ID === String(Number(d.task_id)); })[0];
+    if (!sub || !task || lc_(task.Project) !== lc_(sub.Project)) return fail_("Subtask unavailable.", 404);
+    const prev = rows.filter(function (r) { return r.Type === "Subtask" && r.ID === sub.SubtaskID; })[0];
+    const rec = { Type: "Subtask", ID: sub.SubtaskID, Project: sub.Project, Subtask: sub.Name, Status: status, Updated: today, Notes: clean_(d.note, 3000) };
+    if (prev) { rec._row = prev._row; put_(sh, TASK_H, rec); } else append_(sh, TASK_H, rec);
+    return ok_();
+  }
+
+  /* ---------- admin only ---------- */
+  if (!admin) return fail_("Administrator access required.", 403);
+  const projectsSh = sheet_("Projects", H.Projects);
+  const subtasksSh = sheet_("Subtasks", H.Subtasks);
+  const commonSh = sheet_("CommonSubtasks", H.CommonSubtasks);
+  const usersSh = sheet_("Users", H.Users);
+  const findProject = function (name) { return read_(projectsSh).filter(function (r) { return lc_(r.Project) === lc_(name); })[0]; };
+
+  switch (action) {
+    case "project": {
+      const name = clean_(d.name, 100);
+      if (!name) return fail_("Enter a project name.", 400);
+      if (findProject(name)) return fail_("That project already exists.", 409);
+      append_(projectsSh, H.Projects, { Project: name });
+      return ok_();
+    }
+    case "project/delete": {
+      const p = findProject(clean_(d.name, 100));
+      if (!p) return fail_("Project unavailable.", 404);
+      deleteRows_(subtasksSh, read_(subtasksSh).filter(function (r) { return lc_(r.Project) === lc_(p.Project); }));
+      deleteRows_(projectsSh, [p]);
+      return ok_();
+    }
+    case "common-subtask": {
+      const name = clean_(d.name, 100);
+      if (!name) return fail_("Enter a common subtask name.", 400);
+      if (read_(commonSh).some(function (r) { return lc_(r.Name) === lc_(name); })) return fail_("That common subtask already exists.", 409);
+      append_(commonSh, H.CommonSubtasks, { Name: name });
+      return ok_();
+    }
+    case "common-subtask/apply": {
+      const okList = function (l) { return Array.isArray(l) && l.length > 0 && l.length <= 200 && l.every(function (x) { return typeof x === "string"; }); };
+      if (!okList(d.projects) || !okList(d.subtasks)) return fail_("Select at least one project and one common subtask.", 400);
+      const projects = d.projects.map(function (n) { const p = findProject(n); return p && p.Project; });
+      const commons = read_(commonSh);
+      const names = d.subtasks.map(function (n) { const c = commons.filter(function (r) { return lc_(r.Name) === lc_(n); })[0]; return c && c.Name; });
+      if (projects.indexOf(undefined) >= 0 || projects.indexOf("") >= 0 || names.indexOf(undefined) >= 0) return fail_("A selected project or common subtask is unavailable.", 400);
+      const existing = read_(subtasksSh);
+      let added = 0;
+      projects.filter(function (p, i) { return projects.indexOf(p) === i; }).forEach(function (p) {
+        names.filter(function (n, i) { return names.indexOf(n) === i; }).forEach(function (n) {
+          if (existing.some(function (r) { return lc_(r.Project) === lc_(p) && lc_(r.Name) === lc_(n); })) return;
+          const rec = { SubtaskID: String(nextId_()), Project: p, Name: n };
+          append_(subtasksSh, H.Subtasks, rec); existing.push(rec); added++;
+        });
+      });
+      return ok_({ added: added });
+    }
+    case "subtask": case "subtask/rename": case "subtask/delete": {
+      const id = /^\d{1,9}$/.test(String(d.id)) ? String(Number(d.id)) : "";
+      const all = read_(subtasksSh);
+      if (action === "subtask/delete") {
+        const s = all.filter(function (r) { return r.SubtaskID === id; })[0];
+        if (!s) return fail_("Subtask unavailable.", 404);
+        deleteRows_(subtasksSh, [s]);
+        return ok_();
+      }
+      const name = clean_(d.name, 100);
+      if (!name) return fail_("Enter a subtask name.", 400);
+      let project, current;
+      if (action === "subtask/rename") {
+        current = all.filter(function (r) { return r.SubtaskID === id; })[0];
+        project = current && current.Project;
+      } else {
+        const p = findProject(clean_(d.project, 100));
+        project = p && p.Project;
+      }
+      if (!project) return fail_("Project or subtask unavailable.", 404);
+      if (all.some(function (r) { return lc_(r.Project) === lc_(project) && lc_(r.Name) === lc_(name) && r.SubtaskID !== id; })) return fail_("That subtask already exists.", 409);
+      if (current) { current.Name = name; put_(subtasksSh, H.Subtasks, current); }
+      else append_(subtasksSh, H.Subtasks, { SubtaskID: String(nextId_()), Project: project, Name: name });
+      return ok_();
+    }
+    case "member": {
+      const id = lc_(clean_(d.id, 40)), name = clean_(d.name, 100);
+      if (!/^[a-z0-9._-]{3,40}$/.test(id) || id === "admin" || !name) return fail_("Enter a valid user ID (3-40 letters, numbers . _ -) and a name.", 400);
+      if (read_(usersSh).some(function (r) { return lc_(r.UserID) === id; })) return fail_("That user ID already exists.", 409);
+      const tab = tabName_(name, id);
+      sheet_(tab, TASK_H);                       // <- the employee's own sheet tab
+      append_(usersSh, H.Users, { UserID: id, Name: name, Role: "employee", Active: "1", SheetName: tab, Created: today });
+      return ok_();
+    }
+    case "member/delete": case "access": {
+      const id = clean_(d.id, 80);
+      const u = read_(usersSh).filter(function (r) { return r.UserID === id && r.Role === "employee" && Number(r.Active) >= 0; })[0];
+      if (!u) return fail_("Employee unavailable.", 404);
+      if (action === "access") { u.Active = d.active === true ? "1" : "0"; put_(usersSh, H.Users, u); return ok_(); }
+      const stamp = String(Date.now());
+      const tab = ss_().getSheetByName(u.SheetName);
+      if (tab) { u.SheetName = tabName_(u.SheetName.slice(0, 50) + " (archived)", stamp); tab.setName(u.SheetName); }
+      u.UserID = u.UserID + "~" + stamp; u.Active = "-1";
+      put_(usersSh, H.Users, u);
+      return ok_();
+    }
+    case "task": {
+      const okList = function (l) { return Array.isArray(l) && l.length > 0 && l.length <= 100 && l.every(function (x) { return typeof x === "string"; }); };
+      if (!okList(d.projects) || !okList(d.employees)) return fail_("Select at least one project and one employee.", 400);
+      const projects = d.projects.map(function (n) { const p = findProject(n); return p && p.Project; });
+      const users = read_(usersSh);
+      const emps = d.employees.map(function (id) { return users.filter(function (r) { return r.UserID === id && r.Role === "employee" && r.Active === "1"; })[0]; });
+      if (projects.some(function (p) { return !p; }) || emps.some(function (u) { return !u; })) return fail_("Choose existing projects and active employees.", 400);
+      emps.filter(function (u, i) { return emps.indexOf(u) === i; }).forEach(function (u) {
+        const sh = userSheet_(u), rows = read_(sh);
+        projects.filter(function (p, i) { return projects.indexOf(p) === i; }).forEach(function (p) {
+          if (rows.some(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(p); })) return;
+          append_(sh, TASK_H, { Type: "Task", ID: String(nextId_()), Project: p, Assigned: today, Due: "", Status: "Pending" });
+        });
+      });
+      return ok_();
+    }
+  }
+  return fail_("Page unavailable.", 404);
+}
+
+function state_(me, today) {
+  const admin = me.role === "admin";
+  const users = read_(sheet_("Users", H.Users));
+  const subtasks = read_(sheet_("Subtasks", H.Subtasks)).sort(function (a, b) { return Number(a.SubtaskID) - Number(b.SubtaskID); });
+  const targets = admin ? users.filter(function (u) { return u.Role === "employee"; }) : users.filter(function (u) { return u.UserID === me.id; });
+  const tasks = [], progress = [], ss = ss_();
+  targets.forEach(function (u) {
+    const sh = ss.getSheetByName(u.SheetName);
+    if (!sh) return;
+    const rows = read_(sh), saved = {};
+    rows.forEach(function (r) { if (r.Type === "Subtask") saved[r.ID] = r; });
+    rows.forEach(function (r) {
+      if (r.Type !== "Task") return;
+      const id = Number(r.ID);
+      tasks.push({ id: id, name: r.Project, user_id: u.UserID, due: r.Due, status: STATUSES.indexOf(r.Status) >= 0 ? r.Status : "Pending", note: r.Notes,
+        project: r.Project, started: r.Started, completed: r.Completed, updated: r.Updated, assigned: r.Assigned, employee: u.Name });
+      subtasks.forEach(function (s) {
+        if (lc_(s.Project) !== lc_(r.Project)) return;
+        const p = saved[s.SubtaskID];
+        progress.push({ id: Number(s.SubtaskID), name: s.Name, task_id: id, status: p && p.Status ? p.Status : "Pending", note: p ? p.Notes : "", updated: p ? p.Updated : "" });
+      });
+    });
+  });
+  tasks.sort(function (a, b) { return (a.due || "").localeCompare(b.due || "") || b.id - a.id; });
+  const byName = function (k) { return function (a, b) { return lc_(a[k]).localeCompare(lc_(b[k])); }; };
+  const out = {
+    user: { id: me.id, name: me.name, role: me.role }, today: today, tasks: tasks, progress: progress,
+    users: [], subtasks: [], commonSubtasks: [], projects: [], updates: [],
+  };
+  if (admin) {
+    out.users = users.filter(function (u) { return u.Role === "employee" && Number(u.Active) >= 0; })
+      .map(function (u) { return { id: u.UserID, name: u.Name, active: Number(u.Active) }; }).sort(byName("name"));
+    out.subtasks = subtasks.map(function (s) { return { id: Number(s.SubtaskID), project: s.Project, name: s.Name }; });
+    out.commonSubtasks = read_(sheet_("CommonSubtasks", H.CommonSubtasks)).map(function (r) { return { name: r.Name }; }).sort(byName("name"));
+    out.projects = read_(sheet_("Projects", H.Projects)).map(function (r) { return { name: r.Project }; }).sort(byName("name"));
+  } else {
+    out.updates = read_(sheet_("UpdateLog", H.UpdateLog)).filter(function (r) { return r.UserID === me.id; }).reverse()
+      .map(function (r) { return { task_id: Number(r.TaskID), date: r.Date, status: r.Status, pending: r.Pending, current_work: r.CurrentWork }; });
+  }
+  return out;
+}

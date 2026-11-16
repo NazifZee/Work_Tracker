@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teamwork | Work Tracker</title>
+<link rel="stylesheet" href="tracker.css">
+<script src="config.js"></script>
+<script src="tracker.js" defer></script>
+</head>
+<body>
+<div class="shell">
+<aside>
+  <div class="brand"><span class="logo">✓</span><div>Teamwork<small>WORK TRACKER</small></div></div>
+  <nav id="nav" hidden>
+    <button data-view="tasks">▤ &nbsp; Tasks</button>
+    <button data-view="projects" data-admin>▧ &nbsp; Projects</button><button data-view="people" data-admin>♙ &nbsp; Team access</button>
+    <button data-view="reports">▥ &nbsp; Reports</button>
+  </nav>
+  <div id="profile" hidden><strong id="identity"></strong><small id="role"></small><button id="password-button">Change password</button><button id="logout">Sign out</button></div>
+</aside>
+<main>
+  <div class="top"><span>Workspace <b>/</b> <span id="location">Sign in</span></span><span><button type="button" id="reload" hidden>↻ Refresh</button> <span id="today"></span></span></div>
+  <div id="notice" role="status"></div>
+  <section id="login">
+    <div class="intro"><span class="eyebrow">TEAM WORKSPACE</span><h1>Keep work moving.</h1><p>Sign in to view assignments, update progress, and export reports.</p></div>
+    <form class="card stack" data-action="login"><h2>Sign in</h2>
+      <label>User ID<input name="id" autocomplete="username" required></label>
+      <label>Password <small>(admin only - employees leave this empty)</small><input name="password" type="password" autocomplete="current-password"></label>
+      <button class="primary">Sign in</button>
+    </form>
+  </section>
+  <section id="tasks" hidden>
+    <div class="intro heading"><div><h1 id="tasks-title">Team tasks</h1><p>Track assignments and share progress updates.</p></div><button class="primary" id="new-task" data-admin>+ Assign projects</button></div>
+    <div class="stats" id="stats"></div>
+    <div class="card">
+      <div class="toolbar"><h2>Task list</h2><label>Status<select id="filter"><option>All statuses</option><option>Pending</option><option>In progress</option><option>Done</option><option>Delayed</option></select></label></div>
+            <div class="toolbar filters">
+        <label>Time range<select id="task-period"><option value="today">Today</option><option value="all">All dates</option><option value="date">Select date</option></select></label>
+        <label id="task-date-label" hidden>Date<input id="task-date" type="date"></label>
+        <label data-admin>Project<select id="project-filter"></select></label>
+        <label data-admin>Subtask<select id="subtask-filter"></select></label>
+        <label data-admin>Employee<select id="employee-filter"></select></label>
+      </div>
+      <div id="task-list"></div>
+      <form id="batch-form" class="stack" hidden><h2>Selected task updates</h2><div id="batch-fields" class="stack"></div><button class="primary">Save selected updates</button></form>
+      <div id="task-suggestions"><h2>Unfinished tasks</h2><p>Review pending, in-progress, and delayed work from earlier dates.</p><div id="suggestion-list"></div></div>
+      
+    </div>
+  </section>
+  <section id="projects" hidden>
+    <div class="intro"><h1>Projects</h1></div>
+    <form class="card stack" data-action="project"><label>Project name<input name="name" maxlength="100" required></label><button class="primary">Create project</button></form>
+    <div class="card common-subtasks">
+      <h2>Common subtasks</h2>
+      <form class="toolbar" data-action="common-subtask">
+        <label>Subtask name<input name="name" maxlength="100" required></label>
+        <button>Add to library</button>
+      </form>
+      <form class="stack" data-action="common-subtask/apply">
+        <div class="work-note-grid">
+          <fieldset class="task-editor"><legend>Common subtasks</legend><div id="common-subtask-options" class="stack"></div></fieldset>
+          <fieldset class="task-editor"><legend>Projects</legend><div id="common-project-options" class="stack"></div></fieldset>
+        </div>
+        <button class="primary">Add selected subtasks</button>
+      </form>
+    </div>
+    <div class="card" id="project-list"></div>
+  </section>
+  <section id="people" hidden>
+    <div class="intro heading"><div><h1>Team access</h1><p>Add employees (each gets their own sheet tab) and manage who can sign in.</p></div><button class="primary" id="new-member">+ Add employee</button></div>
+    <div class="card" id="member-list"></div>
+  </section>
+  <section id="reports" hidden>
+    <div class="intro heading"><div><h1>Reports</h1><p>View or export project work for a day or month.</p></div><div class="toolbar"><button id="csv">Export CSV</button><button class="primary" id="print">Export PDF</button></div></div>
+    <div class="card">
+      <div class="toolbar"><label>Period<select id="period"><option value="date">Daily</option><option value="month">Monthly</option></select></label><label>Date<input id="report-date" type="date" required></label><label data-admin>Employee<select id="report-employee"></select></label><label>Project<select id="report-project"></select></label></div>
+      <div id="report">
+        <div class="report-title"><h2>Work report</h2><p id="report-range"></p></div>
+        <div id="report-list"></div>
+      </div>
+    </div>
+  </section>
+</main>
+</div>
+<dialog id="assign"><form class="stack" data-action="task">
+<h2>Assign projects</h2>
+<fieldset class="task-editor"><legend>Projects</legend><div id="assign-projects" class="stack"></div></fieldset>
+<fieldset class="task-editor"><legend>Employees</legend><div id="assign-employees" class="stack"></div></fieldset>
+<footer><button type="button" data-close>Cancel</button><button class="primary">Assign projects</button></footer>
+</form></dialog>
+<dialog id="member"><form class="stack" data-action="member">
+<h2>Add employee</h2><p>A new sheet tab with this name is created for them. They sign in with the user ID only.</p><label>Name<input name="name" maxlength="100" required></label><label>User ID<input name="id" pattern="[a-zA-Z0-9._\-]{3,40}" required></label>
+<footer><button type="button" data-close>Cancel</button><button class="primary">Add employee</button></footer>
+</form></dialog>
+<dialog id="password-dialog"><form class="stack" data-action="password">
+<h2>Change password</h2>
+<label>Current password<input name="current" type="password" autocomplete="current-password" required></label>
+<label>New password<input name="password" type="password" maxlength="200" autocomplete="new-password" required></label>
+<footer><button type="button" data-close>Cancel</button><button class="primary">Save password</button></footer>
+</form></dialog>
+<dialog id="subtask-name"><form class="stack" data-action="subtask">
+<h2>Add subtask</h2>
+<input type="hidden" name="project"><input type="hidden" name="id">
+<label>Subtask name<input name="name" maxlength="100" required></label>
+<footer><button type="button" data-close>Cancel</button><button class="primary">Save</button></footer>
+</form></dialog>
+</body>
+</html>

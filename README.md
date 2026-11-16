@@ -1,0 +1,50 @@
+# Teamwork Work Tracker - Google Sheet version
+
+Website = plain files on **GitHub Pages** (free). Data = **your Google Sheet**, through a **Google Apps Script** web app.
+
+* Admin has a password. Employees sign in with their **User ID only**.
+* Adding an employee creates a **new tab in the sheet named after them**.
+* Everything is stored in the sheet: `Users`, one tab per employee, `Projects`, `Subtasks`, `CommonSubtasks`, `UpdateLog`, `Config`.
+
+## Setup (about 10 minutes)
+
+### 1. Put the backend code in your sheet
+1. Open your Google Sheet > **Extensions > Apps Script**.
+2. Delete everything in the editor, paste all of `apps-script/Code.gs`, click **Save**.
+3. In the function dropdown choose **setup** and click **Run**. Google asks for permission: **Review permissions > choose your account > Advanced > Go to project (unsafe) > Allow**. (It is your own script.)
+   This creates the tabs `Users`, `Config`, `Projects`, ...
+
+### 2. Set the admin password
+Open the **Config** tab. Next to `AdminPassword`, type your password (10+ characters) in the **Value** cell.
+After your first sign in it is scrambled automatically, so it is no longer readable in the sheet. To change it later, type a new one in that cell (or use *Change password* in the app).
+
+### 3. Deploy the web app
+**Deploy > Manage deployments** > pencil icon > Version: **New version** > **Deploy**.
+(First time ever: **Deploy > New deployment > Web app**.) Settings:
+* Execute as: **Me**
+* Who has access: **Anyone**
+
+Keep the same deployment so the URL stays the same. Every time you change `Code.gs` you must deploy a **New version**.
+Your URL is already in `config.js`. If it ever changes, paste the new one there.
+
+### 4. Publish the website
+Upload `index.html`, `tracker.css`, `tracker.js`, `config.js` (and the `.gitignore`) to your GitHub repo `NazifZee/Work_Tracker`.
+If you uploaded the earlier Supabase version, delete its `supabase` folder and `.github` folder.
+Then: **Settings > Pages > Deploy from a branch > main / (root) > Save**. Site: `https://nazifzee.github.io/Work_Tracker/`
+
+### 5. Use it
+* Sign in as `admin` + your password.
+* **Projects** > create projects (and subtasks). **Team access > Add employee** (name + user ID). A new tab appears in the sheet.
+* **Tasks > Assign projects**. Employees open the site, type their user ID, tick their task, add notes, **Save**.
+* The admin screen refreshes every minute (or press **Refresh**). Reports export to CSV/PDF.
+
+## Changing the HTML later
+Open `index.html` on GitHub > pencil > edit > Commit. Live in about a minute. The data stays in the sheet.
+
+## Good to know
+* **Employees have no password.** Anyone who knows an employee's user ID can open that person's tasks. Use IDs that are not easy to guess (for example `bob.k7`) and do not share the site link publicly. The admin side is always password protected.
+* You can also edit cells directly in an employee's tab (for example the Due column) and the app shows it.
+* Do not rename an employee tab by hand. If you do, update the `SheetName` column in the `Users` tab.
+* Deleting an employee in the app keeps their tab (renamed "... (archived)") and their history.
+* Each click takes about 1-3 seconds (Google Sheets is slower than a real database). Fine for small teams.
+* Sign-ins last 6 hours.
