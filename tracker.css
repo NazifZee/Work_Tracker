@@ -176,3 +176,8 @@ dialog{width:min(460px,calc(100% - 26px));border:1px solid var(--line);border-ra
   outline:2px solid #73d7ab;
   outline-offset:2px;
 }
+.project-status button[aria-pressed="true"] {
+  color:#a9d1fd;
+  background:#263f59;
+  border-color:#78a8d5;
+}

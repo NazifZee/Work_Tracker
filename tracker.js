@@ -77,7 +77,7 @@ function table(container, headers, rows, empty) {
   container.append(scroll);
 }
 function status(task) {
-  return task.status !== "Done" && task.due && task.due < state.today ? "Delayed" : task.status;
+  return task.status === "Pending" && task.due && task.due < state.today ? "Delayed" : task.status;
 }
 function tag(label) {
   return element("span",label,"tag " + label.toLowerCase());
@@ -295,7 +295,7 @@ function subtaskEditor(task, draft, steps) {
     card.append(element("legend",step.name));
     const choices = element("div",undefined,"work-status-options");
     const inputs = element("div",undefined,"work-note-grid");
-    const labels = {Pending:"Pending work","In progress":"Current work",Delayed:"Delayed work",Done:null};
+    const labels = {Pending:"Pending work","In progress":"Current work",Delayed:"Finish task notes"};
     for (const [status,noteLabel] of Object.entries(labels)) {
       const label = element("label",undefined,"task-choice");
       const checkbox = element("input");
@@ -306,14 +306,13 @@ function subtaskEditor(task, draft, steps) {
         markEdited();
         if (!checkbox.checked) delete change[status];
         else {
-          if (status === "Done") Object.keys(change).forEach(key=>delete change[key]);
-          else delete change.Done;
+          delete change.Done;
           change[status] = "";
         }
         drawBatch();
         document.getElementById(checkbox.id)?.focus();
       });
-      label.append(checkbox,element("span",status));
+      label.append(checkbox,element("span",status === "Delayed" ? "Finish task" : status));
       choices.append(label);
       if (!checkbox.checked || !noteLabel) continue;
       const notes = element("textarea");
@@ -367,18 +366,22 @@ function drawBatch() {
     const steps = state.progress.filter(step=>step.task_id===task.id && (state.user.role !== "admin" || !$("#subtask-filter").value || String(step.id)===$("#subtask-filter").value));
     if (steps.length) {
       if (!Object.hasOwn(draft.activities,"Done")) panel.append(subtaskEditor(task,draft,steps));
-      const label = element("label",undefined,"task-choice");
-      const done = element("input");
-      done.type = "checkbox";
-      done.checked = draft.activities.Done !== undefined;
-      done.addEventListener("change",()=>{
-        draft.activities = done.checked ? {Done:""} : {};
-        drawBatch();
-        $("#project-done-"+task.id)?.focus();
-      });
-      done.id = "project-done-"+task.id;
-      label.append(done,element("span","Mark project Done"));
-      panel.append(label,button("Remove selection",()=>{
+      const choices = element("div",undefined,"editor-actions project-status");
+      choices.setAttribute("role","group");
+      choices.setAttribute("aria-label","Project status");
+      const activeStatus = Object.keys(draft.activities)[0] || status(task);
+      for (const value of ["Pending","In progress","Done"]) {
+        const choice = button(value === "Done" ? "Mark project done" : value,()=>{
+          draft.activities = {[value]:""};
+          draft.projectStatusOnly = true;
+          drawBatch();
+          document.getElementById(choice.id)?.focus();
+        });
+        choice.id = "project-status-"+task.id+"-"+value.replaceAll(" ","-");
+        choice.setAttribute("aria-pressed",String(activeStatus === value));
+        choices.append(choice);
+      }
+      panel.append(element("strong","Project status"),choices,button("Remove selection",()=>{
         selected.delete(task.id);
         drawTasks();
         drawBatch();
@@ -654,6 +657,10 @@ $("#batch-form").addEventListener("submit",async event=>{
       .map(id=>({draft,id,data:subtaskUpdate(draft.id,id,draft.steps[id])})));
     const updates = drafts.filter(draft=>Object.keys(draft.activities).length).map(draft=>{
       const statuses = Object.keys(draft.activities);
+      if (draft.projectStatusOnly) {
+        const task = state.tasks.find(task=>task.id===draft.id);
+        return {id:draft.id,status:statuses[0],note:task.note || ""};
+      }
       const status = ["In progress","Delayed","Pending","Done"].find(value=>statuses.includes(value));
       const note = statuses.map(value=>value+(draft.activities[value].trim() ? ": "+draft.activities[value].trim() : ""));
       return {id:draft.id,status,note:note.join("\n"),pending:draft.activities.Pending ?? ""};
