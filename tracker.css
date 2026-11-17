@@ -211,3 +211,80 @@ dialog{width:min(460px,calc(100% - 26px));border:1px solid var(--line);border-ra
   #attendance .stat { border-top-color:#c5dde52e; }
   #attendance-records .tag.work.from.home { background:#294648; color:#afe6e3; }
 }
+/* Office workspace colors */
+@media screen {
+  :root {
+    --workspace:#141b24;
+    --sidebar:#171f2a;
+    --panel:#1c2632;
+    --raised:#263343;
+    --field:#151e29;
+    --line:#344357;
+    --muted:#abb9c9;
+    --accent:#a9cbff;
+    --primary:#a9cbff;
+    --primary-text:#12233c;
+    --selection:#263f5e;
+    --hover:#243245;
+    --notice:#a6ddc7;
+    --error:#ffb6bf;
+    background:var(--workspace);
+  }
+  :root[data-theme="light"] {
+    color-scheme:light;
+    color:#18283c;
+    --workspace:#f2f5f9;
+    --sidebar:#f9fbfd;
+    --panel:#fff;
+    --raised:#eff3f8;
+    --field:#fff;
+    --line:#cbd5e2;
+    --muted:#516176;
+    --accent:#234f89;
+    --primary:#244e84;
+    --primary-text:#fff;
+    --selection:#e1edfc;
+    --hover:#f3f7fb;
+    --notice:#17604a;
+    --error:#a4243c;
+  }
+  body { background:var(--workspace); }
+  aside { background:var(--sidebar); }
+  .brand { color:inherit; }
+  .logo,nav button[aria-current] { color:var(--accent); border-color:var(--line); background:var(--selection); }
+  nav button,#logout { color:var(--muted); }
+  .card,.stat,dialog,.user-card {
+    background:var(--panel);
+    border-color:var(--line);
+    border-radius:10px;
+    backdrop-filter:none;
+    box-shadow:0 1px 3px #0a172114;
+  }
+  .task-editor,#login .intro { background:var(--raised); }
+  button,input,select,textarea,#task-name-summary { border-color:var(--line); }
+  .primary { background:var(--primary); border-color:var(--primary); color:var(--primary-text); }
+  button:hover { box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 30%,transparent); }
+  .top-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  #theme-toggle { min-width:72px; font-size:13px; }
+  #theme-toggle::before { content:"☀"; margin-right:6px; }
+  #theme-toggle[aria-pressed=true]::before { content:"☾"; }
+  th,tr:hover td { background:var(--hover); }
+  #notice { color:var(--notice); }
+  .form-error { color:var(--error); }
+  .project-status button[aria-pressed=true],
+  .common-subtasks .horizontal-project-list .task-choice input:checked + span {
+    color:var(--accent); background:var(--selection); border-color:var(--accent);
+  }
+  .common-subtasks .horizontal-project-list .task-choice span { color:inherit; background:var(--raised); border-color:var(--line); }
+  .common-subtasks .horizontal-project-list .task-choice:hover span { border-color:var(--accent); }
+  .common-subtasks .horizontal-project-list .task-choice input:focus-visible + span { outline-color:var(--accent); }
+  :root[data-theme="light"] :is(.tag,.chip) { background:#e9eef6; color:#374d68; }
+  :root[data-theme="light"] :is(.tag.in.progress,.chip.extra,.extra-item) { background:#e1edfc; color:#245481; }
+  :root[data-theme="light"] .extra-item b { color:#245481; }
+  :root[data-theme="light"] :is(.tag.done,.chip.done) { background:#e0f1e8; color:#1b6247; }
+  :root[data-theme="light"] :is(.tag.delayed,.chip.delayed) { background:#f8ebdb; color:#78501d; }
+  :root[data-theme="light"] #attendance-records .tag.work.from.home { background:#def0ef; color:#255c60; }
+  :root[data-theme="light"] .stat:nth-child(2) strong { color:#245481; }
+  :root[data-theme="light"] .stat:nth-child(3) strong { color:#1b6247; }
+  :root[data-theme="light"] .stat:nth-child(4) strong { color:#78501d; }
+}

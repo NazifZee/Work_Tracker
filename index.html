@@ -4,6 +4,32 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Teamwork | Work Tracker</title>
+<script>
+(() => {
+  const key = "teamwork-theme";
+  const root = document.documentElement;
+  let theme;
+  try { theme = localStorage.getItem(key); } catch {}
+  if (theme !== "light" && theme !== "dark") {
+    theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  root.dataset.theme = theme;
+  document.addEventListener("DOMContentLoaded", () => {
+    const control = document.getElementById("theme-toggle");
+    function update() {
+      control.textContent = theme === "dark" ? "Dark" : "Light";
+      control.setAttribute("aria-pressed", String(theme === "dark"));
+    }
+    update();
+    control.addEventListener("click", () => {
+      theme = theme === "dark" ? "light" : "dark";
+      root.dataset.theme = theme;
+      try { localStorage.setItem(key, theme); } catch {}
+      update();
+    });
+  });
+})();
+</script>
 <link rel="stylesheet" href="tracker.css">
 <script src="config.js"></script>
 <script src="tracker.js" defer></script>
@@ -21,7 +47,7 @@
   <div id="profile" hidden><strong id="identity"></strong><small id="role"></small><button id="password-button">Change password</button><button id="logout">Sign out</button></div>
 </aside>
 <main>
-  <div class="top"><span>Workspace <b>/</b> <span id="location">Sign in</span></span><span><button type="button" id="reload" hidden>↻ Refresh</button> <span id="today"></span></span></div>
+  <div class="top"><span>Workspace <b>/</b> <span id="location">Sign in</span></span><div class="top-actions"><span id="today"></span><button type="button" id="reload" hidden>↻ Refresh</button><button type="button" id="theme-toggle" aria-label="Dark mode" aria-pressed="false">Light</button></div></div>
   <div id="notice" role="status"></div>
   <section id="login">
     <div class="intro"><span class="eyebrow">TEAM WORKSPACE</span><h1>Keep work moving.</h1><p>Sign in to view assignments, update progress, and export reports.</p></div>
