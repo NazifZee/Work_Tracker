@@ -519,12 +519,17 @@ function attendance_(action, d, usersSh) {
     groups.forEach(function (group,id) {
       group.sort(function (a,b) { return a.Date.localeCompare(b.Date); });
       const first = group[0], last = group[group.length-1];
-      const count = group.filter(function (row) {
+      const inPeriod = group.filter(function (row) {
         const month = row.Date.slice(0,7);
         return month >= from && month <= to;
-      }).length;
-      if (!count) return;
+      });
+      if (!inPeriod.length) return;
+      const counted = inPeriod.filter(function (row) {
+        return first.Status !== "Off" || new Date(row.Date + "T00:00:00Z").getUTCDay() !== 0;
+      });
+      const count = counted.length;
       records.push({id:id,date:first.Date,end_date:last.Date,day:first.Day,days:group.length,count:count,
+        weekdays:counted.length <= 6 ? counted.map(function (row) { return row.Day; }) : [],
         user_id:first.UserID,name:first.Name,status:/^(First|Second) half$/.test(first.Status) ? "Half day" : first.Status,
         notes:first.Notes || ""});
     });
@@ -576,7 +581,8 @@ function attendance_(action, d, usersSh) {
   if (required > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), required - sh.getMaxRows());
   sh.getRange(first,1,values.length,H.Attendance.length).setValues(values);
   deleteRows_(sh,original);
-  return ok_({days:values.length});
+  const countedDays = values.filter(function (row) { return d.status !== "Off" || row[1] !== "Sunday"; }).length;
+  return ok_({days:countedDays});
 }
 
 function state_(me, today) {

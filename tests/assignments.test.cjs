@@ -138,3 +138,12 @@ assert.equal(attendance('list',{month:'2026-12'}).data.records[0].status,'Half d
 run("testUser={id:'a',role:'employee',name:'Alice'}");
 assert.equal(attendance('delete',{id:edited[0].id}).status,403);
 console.log('Passed: ranges and period counts, edits, notes, deletion, overlap checks, and legacy half days.');
+
+run("testUser={id:'admin',role:'admin',name:'Admin'}");
+assert.equal(attendance('save',{...record,status:'Off',date:'2026-11-14',end_date:'2026-11-16'}).data.days,2);
+const weekendLeave = attendance('list',{month:'2026-11'}).data.records.find(row=>row.date==='2026-11-14');
+assert.equal(weekendLeave.count,2);
+assert.equal(weekendLeave.end_date,'2026-11-16');
+assert.equal(weekendLeave.weekdays.join(','),'Saturday,Monday');
+assert.equal(attendance('save',{...record,status:'Work from home',date:'2026-11-22'}).data.days,1);
+console.log('Passed: leave excludes Sunday while other attendance statuses still count it.');

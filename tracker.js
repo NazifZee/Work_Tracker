@@ -678,6 +678,14 @@ function editAttendance(row) {
     form.elements.notes.focus({preventScroll:true});
   }
 }
+function attendanceDuration(count, status) {
+  const weekLength = status === "Off" ? 6 : 7;
+  const weeks = Math.floor(count / weekLength);
+  const days = count % weekLength;
+  if (!weeks) return days + (days === 1 ? " day" : " days");
+  return weeks + (weeks === 1 ? " week" : " weeks") +
+    (days ? " " + days + (days === 1 ? " day" : " days") : "");
+}
 function drawAttendance() {
   const employee = $("#attendance-filter").value;
   const rows = attendanceRows.filter(row=>!employee || row.user_id === employee)
@@ -689,7 +697,7 @@ function drawAttendance() {
     card.append(element("span",attendanceLabels[status]),element("strong",count));
     return card;
   }));
-  table($("#attendance-records"),["From date","To date","Days in period","Employee","Status","Notes","Manage"],rows.map(row=>{
+  table($("#attendance-records"),["From date","To date","Days in period","Weekdays","Employee","Status","Notes","Manage"],rows.map(row=>{
     const actions = element("div",undefined,"editor-actions");
     actions.append(button("Edit",()=>editAttendance(row)));
     const remove = button("Delete",async()=>{
@@ -708,7 +716,10 @@ function drawAttendance() {
       }
     });
     actions.append(remove);
-    return [row.date,row.end_date,row.count,row.name,tag(row.status==="Off" ? attendanceLabels.Off : row.status),row.notes || "—",actions];
+    const weekdays = row.weekdays || [];
+    const weekLength = row.status === "Off" ? 6 : 7;
+    const dayNames = row.count < weekLength ? weekdays.join(", ") : "";
+    return [row.date,row.end_date,attendanceDuration(row.count,row.status),dayNames || "—",row.name,tag(row.status==="Off" ? attendanceLabels.Off : row.status),row.notes || "—",actions];
   }),"No attendance records for this selection.");
 }
 function attendanceMonths() {
@@ -743,7 +754,7 @@ async function loadAttendance() {
     const result = await api("attendance/list",{month,end_month});
     if (request !== attendanceRequest || current !== "attendance") return;
     attendanceRows = result.records;
-    $("#attendance-period-caption").textContent = (month === end_month ? month : month+" to "+end_month)+" · Counts are calendar days within this period.";
+    $("#attendance-period-caption").textContent = (month === end_month ? month : month+" to "+end_month)+" · Leave excludes Sundays. One leave week is six counted days.";
     drawAttendance();
   } catch (error) {
     if (request === attendanceRequest) $("#attendance-records").textContent = error.message;
@@ -779,7 +790,7 @@ $("#attendance-form").addEventListener("submit",async event=>{
   try {
     const result = await api("attendance/save",record);
     if (current !== "attendance") return;
-    feedback.textContent = "Attendance saved for "+result.days+(result.days === 1 ? " day." : " days.");
+    feedback.textContent = "Attendance saved for "+attendanceDuration(result.days,record.status)+".";
     editAttendance();
     await loadAttendance();
   } catch (error) {
