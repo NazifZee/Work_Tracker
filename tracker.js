@@ -90,13 +90,13 @@ function button(label, action) {
 }
 const taskHeaders = ["Task","Project","Assigned to","Assigned","Due date","Status","Started","Completed","Last update","Notes"];
 function taskValues(task) {
-  return [task.name,task.project || "No project",task.employee+" ("+task.user_id.split("~")[0]+(task.user_id.includes("~")?", archived":"")+")",task.assigned || "—",task.due || "—",status(task),
+  return [task.name,(task.project || "No project")+(task.round>1?" · Round "+task.round:""),task.employee+" ("+task.user_id.split("~")[0]+(task.user_id.includes("~")?", archived":"")+")",task.assigned || "—",task.due || "—",status(task),
     task.started || "—",task.completed || "—",task.updated || "—",task.note || "—"];
 }
 function taskRows(tasks, hideName = false, editable = false, report = false) {
   return tasks.map(task => {
     const row = taskValues(task);
-    row[1] = task.project || task.name;
+    row[1] = (task.project || task.name)+(task.round>1?" · Round "+task.round:"");
     row[5] = tag(row[5]);
     if (editable) {
       const label = element("label",undefined,"task-choice");
@@ -143,6 +143,104 @@ function matchesFilters(task) {
 function workDate(task) {
   return task.updated || task.started || task.assigned || task.due;
 }
+const adminOpen = new Set();
+function userColor(id) {
+  let hash = 0;
+  for (const ch of String(id).split("~")[0]) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
+  return "hsl(" + ((Math.abs(hash) * 137.508) % 360).toFixed(0) + " 60% 42%)";
+}
+function personName(id) {
+  const user = state.users.find(entry => entry.id === id);
+  if (user) return user.name;
+  const task = state.tasks.find(entry => entry.user_id === id);
+  return task ? task.employee + " (archived)" : String(id).split("~")[0];
+}
+function isLatestRound(task) {
+  return !state.tasks.some(other => other.user_id === task.user_id && (other.project || "").toLowerCase() === (task.project || "").toLowerCase() && other.round > task.round);
+}
+function extraItems(entries) {
+  const list = element("div",undefined,"extra-items");
+  for (const entry of entries) {
+    const item = element("div",undefined,"extra-item");
+    item.append(element("b",entry.date),element("span",entry.note));
+    list.append(item);
+  }
+  return list;
+}
+function adminCard(group) {
+  const card = element("details",undefined,"user-card");
+  card.style.setProperty("--user",userColor(group.id));
+  card.open = adminOpen.has(group.id);
+  card.addEventListener("toggle",()=>{ if (card.open) adminOpen.add(group.id); else adminOpen.delete(group.id); });
+  const name = personName(group.id);
+  const title = element("span",undefined,"user-name");
+  title.append(name,element("small",group.id.split("~")[0]));
+  const chips = element("span",undefined,"chips");
+  for (const label of ["Pending","In progress","Done","Delayed"]) {
+    const count = group.tasks.filter(task=>status(task)===label).length;
+    if (count) chips.append(element("span",label+" "+count,"chip "+label.toLowerCase().replace(" ","-")));
+  }
+  if (group.extras.length) chips.append(element("span","Extra work "+group.extras.length,"chip extra"));
+  const person = state.users.find(user=>user.id===group.id);
+  if (person && !person.active) chips.append(element("span","Disabled","chip"));
+  const initials = name.replace(/\(.*\)/,"").trim().split(/\s+/).map(part=>part[0]).join("").slice(0,2).toUpperCase();
+  const summary = element("summary");
+  summary.append(element("span",initials,"avatar"),title,chips);
+  const body = element("div",undefined,"user-body");
+  const rows = taskRows(group.tasks,true).map((row,index)=>{
+    const task = group.tasks[index];
+    const rework = task.status === "Done" && isLatestRound(task) && !task.user_id.includes("~")
+      ? button("Rework",async()=>{
+          if (!window.confirm("Start a new round of "+task.project+" for "+task.employee+"? The finished round stays in the history.")) return;
+          try { await api("task/rework",{id:task.id,user_id:task.user_id}); await refresh(); $("#notice").textContent = "Rework started."; }
+          catch (error) { $("#notice").textContent = error.message; }
+        })
+      : "";
+    return [row[0],row[2],row[3],row[4],row[5],row[6],row[7],row[8],rework];
+  });
+  const holder = element("div");
+  table(holder,["Project","Assigned","Due date","Status","Started","Completed","Last update","Notes",""],rows,"No project tasks in this view.");
+  body.append(holder);
+  if (group.extras.length) {
+    const details = element("details");
+    details.open = true;
+    details.append(element("summary","Extra work ("+group.extras.length+")"),extraItems(group.extras));
+    body.append(details);
+  }
+  card.append(summary,body);
+  return card;
+}
+function drawAdminGroups(displayed, period, date) {
+  const holder = $("#task-list");
+  const showExtras = $("#filter").value === "All statuses" && !$("#project-filter").value && !$("#subtask-filter").value;
+  const employee = $("#employee-filter").value;
+  const extras = showExtras ? state.extras.filter(entry => (period === "all" || entry.date === date) && (!employee || entry.user_id === employee)) : [];
+  const groups = new Map();
+  const group = id => { if (!groups.has(id)) groups.set(id,{id,tasks:[],extras:[]}); return groups.get(id); };
+  for (const task of displayed) group(task.user_id).tasks.push(task);
+  for (const entry of extras) group(entry.user_id).extras.push(entry);
+  const ordered = [...groups.values()].sort((a,b)=>personName(a.id).localeCompare(personName(b.id)));
+  if (!ordered.length) return holder.replaceChildren(element("p","No tasks match this view.","empty"));
+  const cards = ordered.map(adminCard);
+  const setAll = open => cards.forEach((card,index)=>{ card.open = open; if (open) adminOpen.add(ordered[index].id); else adminOpen.delete(ordered[index].id); });
+  const bar = element("div",undefined,"toolbar group-bar");
+  bar.append(element("span",ordered.length+" employee"+(ordered.length===1?"":"s")),
+    button("Expand all",()=>setAll(true)),button("Collapse all",()=>setAll(false)));
+  holder.replaceChildren(bar,...cards);
+}
+function drawExtras() {
+  const holder = $("#extra-list");
+  holder.replaceChildren();
+  const entries = state.extras || [];
+  if (!entries.length) return holder.append(element("p","No extra work added yet.","empty"));
+  holder.append(element("h3","Your extra work ("+entries.length+")"),extraItems(entries.slice(0,100)));
+}
+function reportExtras() {
+  const date = $("#report-date").value;
+  if (!date || !$("#report-date").checkValidity() || $("#report-project").value) return [];
+  const employee = state.user.role === "admin" ? $("#report-employee").value : state.user.id;
+  return (state.extras || []).filter(entry => entry.date.startsWith(date) && (!employee || entry.user_id === employee));
+}
 function drawTasks() {
   const filter = $("#filter").value;
   const period = $("#task-period").value;
@@ -159,6 +257,8 @@ function drawTasks() {
     return card;
   }));
   const headers = taskHeaders.slice(1);
+  $("#task-suggestions").hidden = admin;
+  if (admin) return drawAdminGroups(displayed,period,date);
   table($("#task-list"),headers,taskRows(displayed,true,!admin),"No tasks match this view.");
   const backlog = visible.filter(task => task.status !== "Done" && workDate(task) && workDate(task) < state.today);
   table($("#suggestion-list"),headers,taskRows(backlog,true,!admin),"No unfinished work from earlier dates.");
@@ -363,7 +463,15 @@ function drawReports() {
   const employee = $("#report-employee");
   const scope = [date,$("#report-project").value,admin && employee.value ? employee.selectedOptions[0].text : ""];
   $("#report-range").textContent = date ? scope.filter(Boolean).join(" · ") : "Choose a reporting date.";
-  table($("#report-list"),admin ? taskHeaders.slice(1) : taskHeaders,taskRows(reportTasks(),admin,false,true),"No tasks match these report filters.");
+  const extras = reportExtras();
+  table($("#report-list"),admin ? taskHeaders.slice(1) : taskHeaders,taskRows(reportTasks(),admin,false,true),extras.length ? "No project tasks in this period." : "No tasks match these report filters.");
+  const box = $("#report-extras");
+  box.replaceChildren();
+  if (extras.length) {
+    const holder = element("div");
+    table(holder,admin ? ["Employee","Date","Extra work"] : ["Date","Extra work"],extras.map(entry=>admin ? [personName(entry.user_id),entry.date,entry.note] : [entry.date,entry.note]),"");
+    box.append(element("h3","Extra work"),holder);
+  }
 }
 function syncSubtaskFilter() {
   const project = $("#project-filter").value;
@@ -445,6 +553,11 @@ async function refresh() {
   $("#password-button").hidden = !admin;
   $("#role").textContent = (admin?"Admin":"Employee") + " · " + state.user.id;
   $("#tasks-title").textContent = admin?"Team tasks":"My tasks";
+  $$("[data-employee]").forEach(node => { node.hidden = admin; });
+  const extraDate = $("#extra-date");
+  extraDate.max = state.today;
+  extraDate.defaultValue = state.today;
+  if (!extraDate.value) extraDate.value = state.today;
   $("#task-date").value ||= state.today;
   $("#task-date").max = admin ? "" : state.today;
   $("#report-date").max = admin ? "" : state.today.slice(0,$("#period").value==="month"?7:10);
@@ -461,6 +574,7 @@ async function refresh() {
   show(current === "login" || (!admin && ["people","projects"].includes(current)) ? "tasks" : current);
   drawTasks();
   drawReports();
+  if (!admin) drawExtras();
   renderCommonSubtasks();
   table($("#project-list"),["Project","Subtasks","Manage"],state.projects.map(project=>[
     project.name,manageSubtasks(project.name),button("Delete",async()=>{
@@ -533,8 +647,11 @@ $("#csv").addEventListener("click",()=>{
     const safe = /^[\s]*[=+\-@]|^[\t\r\n]/.test(value) ? "'"+value : value;
     return '"'+safe.replaceAll('"','""')+'"';
   };
-  const rows = [taskHeaders,...reportTasks().map(taskValues)];
-  const csv = rows.map(row=>state.user.role === "admin" ? row.slice(1) : row).map(row=>row.map(escape).join(",")).join("\r\n");
+  const admin = state.user.role === "admin";
+  const rows = [taskHeaders,...reportTasks().map(taskValues)].map(row=>admin ? row.slice(1) : row);
+  const extras = reportExtras();
+  if (extras.length) rows.push([],["Extra work"],admin ? ["Employee","Date","Work"] : ["Date","Work"],...extras.map(entry=>admin ? [personName(entry.user_id),entry.date,entry.note] : [entry.date,entry.note]));
+  const csv = rows.map(row=>row.map(escape).join(",")).join("\r\n");
   const url = URL.createObjectURL(new Blob(["\uFEFF",csv],{type:"text/csv;charset=utf-8"}));
   const link = element("a");
   link.href = url;
@@ -594,7 +711,7 @@ $("#logout").addEventListener("click",async()=>{
   $("#report-date").type = "date";
   $("#report-date").value = "";
   $("#notice").textContent = "";
-  for (const selector of ["#identity","#role","#stats","#task-list","#report-list","#member-list","#project-list","#assign-projects","#assign-employees","#common-subtask-options","#common-project-options"]) $(selector).replaceChildren();
+  for (const selector of ["#identity","#role","#stats","#task-list","#report-list","#member-list","#project-list","#assign-projects","#assign-employees","#common-subtask-options","#common-project-options","#extra-list","#report-extras"]) $(selector).replaceChildren();
   $$("form").forEach(form => form.reset());
   show("login");
 });
@@ -614,6 +731,8 @@ for (const form of $$("form[data-action]")) {
           ? {projects:fields.getAll("projects"),subtasks:fields.getAll("subtasks")}
           : Object.fromEntries(fields);
       const result = await api(form.dataset.action,data);
+      if (form.dataset.action === "task") $("#notice").textContent = result.added ? "Assigned: "+result.added+" new task"+(result.added === 1 ? "" : "s")+"." : "Nothing new: those projects are already open for the selected employees.";
+      if (form.dataset.action === "extra/add") $("#notice").textContent = "Extra work added.";
       if (form.dataset.action === "common-subtask/apply") $("#notice").textContent = result.added ? "Subtasks added: "+result.added : "The selected projects already have these subtasks.";
       form.closest("dialog")?.close();
       form.reset();

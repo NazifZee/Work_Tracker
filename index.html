@@ -1,5 +1,3 @@
-
-
 <!doctype html>
 <html lang="en">
 <head>
@@ -34,6 +32,14 @@
   </section>
   <section id="tasks" hidden>
     <div class="intro heading"><div><h1 id="tasks-title">Team tasks</h1><p>Track assignments and share progress updates.</p></div><button class="primary" id="new-task" data-admin>+ Assign projects</button></div>
+    <div class="card extra-card" id="extra-card" data-employee hidden>
+      <form class="stack" data-action="extra/add">
+        <div><h2>Add extra work</h2><p>Anything you did outside your assigned projects. It is saved as a work update and never stays pending.</p></div>
+        <div class="extra-row"><label>Date<input type="date" name="date" id="extra-date" required></label><label class="grow">Work done<textarea name="note" rows="2" maxlength="900" required></textarea></label></div>
+        <button class="primary">Add extra work</button>
+      </form>
+      <div id="extra-list"></div>
+    </div>
     <div class="stats" id="stats"></div>
     <div class="card">
       <div class="toolbar"><h2>Task list</h2><label>Status<select id="filter"><option>All statuses</option><option>Pending</option><option>In progress</option><option>Done</option><option>Delayed</option></select></label></div>
@@ -80,6 +86,7 @@
       <div id="report">
         <div class="report-title"><h2>Work report</h2><p id="report-range"></p></div>
         <div id="report-list"></div>
+        <div id="report-extras"></div>
       </div>
     </div>
   </section>

@@ -4,7 +4,7 @@ Website = plain files on **GitHub Pages** (free). Data = **your Google Sheet**, 
 
 * Admin has a password. Employees sign in with their **User ID only**.
 * Adding an employee creates a **new tab in the sheet named after them**.
-* Everything is stored in the sheet: `Users`, one tab per employee, `Projects`, `Subtasks`, `CommonSubtasks`, `UpdateLog`, `Config`.
+* Everything is stored in the sheet: `Users`, one tab per employee, **`Project List`** (projects + subtasks + common subtasks in ONE tab), `UpdateLog`, `Config`.
 
 ## Setup (about 10 minutes)
 
@@ -12,7 +12,8 @@ Website = plain files on **GitHub Pages** (free). Data = **your Google Sheet**, 
 1. Open your Google Sheet > **Extensions > Apps Script**.
 2. Delete everything in the editor, paste all of `apps-script/Code.gs`, click **Save**.
 3. In the function dropdown choose **setup** and click **Run**. Google asks for permission: **Review permissions > choose your account > Advanced > Go to project (unsafe) > Allow**. (It is your own script.)
-   This creates the tabs `Users`, `Config`, `Projects`, ...
+   This creates the tabs `Users`, `Config`, `Project List`, `UpdateLog`.
+   If you used an older version, run **setup** again: it copies your old `Projects` / `Subtasks` / `CommonSubtasks` tabs into `Project List` (once). Then you can delete those 3 old tabs.
 
 ### 2. Set the admin password
 Open the **Config** tab. Next to `AdminPassword`, type your password (10+ characters) in the **Value** cell.
@@ -37,6 +38,11 @@ Then: **Settings > Pages > Deploy from a branch > main / (root) > Save**. Site: 
 * **Projects** > create projects (and subtasks). **Team access > Add employee** (name + user ID). A new tab appears in the sheet.
 * **Tasks > Assign projects**. Employees open the site, type their user ID, tick their task, add notes, **Save**.
 * The admin screen refreshes every minute (or press **Refresh**). Reports export to CSV/PDF.
+
+## How the screens work
+* **Admin > Tasks:** one colour-coded card per employee (click to open). Each card shows that person's projects, status counts and extra work. *Expand all / Collapse all* at the top.
+* **Extra work ("Others"):** employees use the *Add extra work* box on their Tasks screen for anything outside their projects. It is saved as a dated work update, never shows as Pending, and appears on the admin card and in Reports.
+* **Rework:** when a project is Done, the admin sees a **Rework** button on it (or can assign the project again). A new Round starts (shown as "Round 2"), the old finished round stays in the history, and the subtasks start fresh.
 
 ## Changing the HTML later
 Open `index.html` on GitHub > pencil > edit > Commit. Live in about a minute. The data stays in the sheet.

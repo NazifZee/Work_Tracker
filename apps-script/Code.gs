@@ -4,23 +4,23 @@
  * Every user, project and task lives in this Google Sheet:
  *   Users           one row per employee (User ID, Name, Active, name of their own tab)
  *   <employee tabs> one tab per employee, named after the employee - their tasks and progress
- *   Projects / Subtasks / CommonSubtasks / UpdateLog   shared lists
+ *   Project List    ONE tab for projects, subtasks and common subtasks (Type column says which)
+ *   UpdateLog       history of every progress update
  *   Config          the admin password (type it in the Value cell; it is scrambled after first login)
  *
  * Only the admin has a password. Employees sign in with their User ID only.
  */
-const SHEET_ID = "";            // leave empty when this script was opened from the sheet (Extensions > Apps Script)
+const SHEET_ID = "";            // empty = use the sheet this script was opened from. Or paste another sheet's ID here (the long code in its link between /d/ and /edit)
 const TZ = "Asia/Kolkata";
 const STATUSES = ["Pending", "In progress", "Done", "Delayed"];
 const H = {
   Users: ["UserID", "Name", "Role", "Active", "SheetName", "Created"],
   Config: ["Setting", "Value"],
-  Projects: ["Project"],
-  Subtasks: ["SubtaskID", "Project", "Name"],
-  CommonSubtasks: ["Name"],
+  "Project List": ["Type", "ID", "Project", "Subtask"],   // Type = Project | Subtask | Common
   UpdateLog: ["Date", "UserID", "TaskID", "Status", "Pending", "CurrentWork"],
 };
-const TASK_H = ["Type", "ID", "Project", "Subtask", "Assigned", "Due", "Status", "Started", "Completed", "Updated", "Notes"];
+const PL = "Project List";
+const TASK_H = ["Type", "ID", "Project", "Subtask", "Assigned", "Due", "Status", "Started", "Completed", "Updated", "Notes", "TaskID"];
 const SESSION_SECONDS = 21600; // 6 hours (Apps Script cache maximum)
 
 /* ------------------------------------------------------------------ */
@@ -33,7 +33,21 @@ function setup() {
   if (!rows.some(function (r) { return r.Setting === "Help"; })) {
     cfg.appendRow(["Help", "Type your admin password (10+ characters) in the Value cell next to AdminPassword. It is scrambled automatically the first time you sign in. To change it later, type a new one here."]);
   }
+  migrateOld_();
   return "Setup complete. Now type the admin password in Config > AdminPassword > Value.";
+}
+
+/** Copies data from the old separate tabs (Projects / Subtasks / CommonSubtasks) into "Project List" once. */
+function migrateOld_() {
+  const ss = ss_(), pl = sheet_(PL, H[PL]);
+  if (read_(pl).length) return;
+  const old = function (name, firstHeader) {
+    const sh = ss.getSheetByName(name);
+    return sh && sh.getLastRow() > 1 && String(sh.getRange(1, 1).getValue()) === firstHeader ? read_(sh) : [];
+  };
+  old("Projects", "Project").forEach(function (r) { append_(pl, H[PL], { Type: "Project", Project: r.Project }); });
+  old("Subtasks", "SubtaskID").forEach(function (r) { append_(pl, H[PL], { Type: "Subtask", ID: r.SubtaskID, Project: r.Project, Subtask: r.Name }); });
+  old("CommonSubtasks", "Name").forEach(function (r) { append_(pl, H[PL], { Type: "Common", Subtask: r.Name }); });
 }
 
 function doGet() {
@@ -64,10 +78,10 @@ function out_(o) { return ContentService.createTextOutput(JSON.stringify(o)).set
 function fail_(msg, status) { return { error: msg, status: status || 400 }; }
 function ok_(data) { return { data: data || {} }; }
 function ss_() {
+  if (SHEET_ID) return SpreadsheetApp.openById(SHEET_ID);   // a sheet ID here wins (use it to point at ANOTHER sheet)
   const active = SpreadsheetApp.getActiveSpreadsheet();
   if (active) return active;
-  if (!SHEET_ID) throw new Error("Set SHEET_ID at the top of Code.gs (or create the script from the sheet).");
-  return SpreadsheetApp.openById(SHEET_ID);
+  throw new Error("Set SHEET_ID at the top of Code.gs (or create the script from the sheet).");
 }
 function today_() { return Utilities.formatDate(new Date(), TZ, "yyyy-MM-dd"); }
 function str_(v) { return v instanceof Date ? Utilities.formatDate(v, TZ, "yyyy-MM-dd") : (v === null || v === undefined ? "" : String(v)); }
@@ -107,7 +121,7 @@ function nextId_() {
 }
 function tabName_(base, id) {
   const taken = ss_().getSheets().map(function (s) { return lc_(s.getName()); });
-  const reserved = Object.keys(H).map(lc_);
+  const reserved = Object.keys(H).map(lc_).concat(["projects", "subtasks", "commonsubtasks"]);
   let tab = String(base || "").replace(/[\[\]\*\?:\/\\]/g, "-").trim().slice(0, 60) || id;
   if (taken.indexOf(lc_(tab)) >= 0 || reserved.indexOf(lc_(tab)) >= 0) tab = (tab + " (" + id + ")").slice(0, 95);
   let n = 2, candidate = tab;
@@ -142,11 +156,18 @@ function checkAdmin_(pw) {
 }
 function userSheet_(u) {
   let sh = ss_().getSheetByName(u.SheetName);
-  if (!sh) {
-    sh = sheet_(u.SheetName, TASK_H);
-  }
+  if (!sh) sh = sheet_(u.SheetName, TASK_H);
+  const last = sh.getRange(1, TASK_H.length);
+  if (String(last.getValue()) !== "TaskID") last.setValue("TaskID");   // older tabs get the new column header
   return sh;
 }
+/** id of the first (oldest) round of a project in one employee tab */
+function firstTaskId_(rows, project) {
+  const ids = rows.filter(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(project); }).map(function (r) { return Number(r.ID); });
+  return ids.length ? String(Math.min.apply(null, ids)) : "";
+}
+/** key that ties a subtask progress row to one subtask AND one round of the project */
+function subKey_(rows, r) { return r.ID + "|" + (r.TaskID || firstTaskId_(rows, r.Project)); }
 
 /* ------------------------------ api ------------------------------ */
 function login_(d) {
@@ -236,87 +257,96 @@ function handle_(action, d, token) {
     const status = clean_(d.status, 20);
     if (STATUSES.indexOf(status) < 0) return fail_("Choose a status.", 400);
     if (!/^\d{1,9}$/.test(String(d.id)) || !/^\d{1,9}$/.test(String(d.task_id))) return fail_("Subtask unavailable.", 404);
-    const sub = read_(sheet_("Subtasks", H.Subtasks)).filter(function (r) { return r.SubtaskID === String(Number(d.id)); })[0];
+    const sub0 = read_(sheet_(PL, H[PL])).filter(function (r) { return r.Type === "Subtask" && r.ID === String(Number(d.id)); })[0];
+    const sub = sub0 && { SubtaskID: sub0.ID, Project: sub0.Project, Name: sub0.Subtask };
     const sh = userSheet_(me), rows = read_(sh);
     const task = rows.filter(function (r) { return r.Type === "Task" && r.ID === String(Number(d.task_id)); })[0];
     if (!sub || !task || lc_(task.Project) !== lc_(sub.Project)) return fail_("Subtask unavailable.", 404);
-    const prev = rows.filter(function (r) { return r.Type === "Subtask" && r.ID === sub.SubtaskID; })[0];
-    const rec = { Type: "Subtask", ID: sub.SubtaskID, Project: sub.Project, Subtask: sub.Name, Status: status, Updated: today, Notes: clean_(d.note, 3000) };
+    const prev = rows.filter(function (r) { return r.Type === "Subtask" && subKey_(rows, r) === sub.SubtaskID + "|" + task.ID; })[0];
+    const rec = { Type: "Subtask", ID: sub.SubtaskID, Project: sub.Project, Subtask: sub.Name, Status: status, Updated: today, Notes: clean_(d.note, 3000), TaskID: task.ID };
     if (prev) { rec._row = prev._row; put_(sh, TASK_H, rec); } else append_(sh, TASK_H, rec);
+    return ok_();
+  }
+
+  if (action === "extra/add") {
+    if (admin) return fail_("Only employees can add extra work.", 403);
+    const note = clean_(d.note, 3000);
+    if (!note) return fail_("Describe the extra work you did.", 400);
+    const date = typeof d.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.date) && d.date <= today ? d.date : today;
+    append_(sheet_("UpdateLog", H.UpdateLog), H.UpdateLog, { Date: date, UserID: me.id, TaskID: "", Status: "Extra", Pending: "", CurrentWork: note });
     return ok_();
   }
 
   /* ---------- admin only ---------- */
   if (!admin) return fail_("Administrator access required.", 403);
-  const projectsSh = sheet_("Projects", H.Projects);
-  const subtasksSh = sheet_("Subtasks", H.Subtasks);
-  const commonSh = sheet_("CommonSubtasks", H.CommonSubtasks);
+  const plSh = sheet_(PL, H[PL]);
   const usersSh = sheet_("Users", H.Users);
-  const findProject = function (name) { return read_(projectsSh).filter(function (r) { return lc_(r.Project) === lc_(name); })[0]; };
+  const rowsOf_ = function (type) { return read_(plSh).filter(function (r) { return r.Type === type; }); };
+  const findProject = function (name) { return rowsOf_("Project").filter(function (r) { return lc_(r.Project) === lc_(name); })[0]; };
 
   switch (action) {
     case "project": {
       const name = clean_(d.name, 100);
       if (!name) return fail_("Enter a project name.", 400);
+      if (lc_(name) === "others") return fail_("\"Others\" is built in: employees add extra work from their own screen.", 400);
       if (findProject(name)) return fail_("That project already exists.", 409);
-      append_(projectsSh, H.Projects, { Project: name });
+      append_(plSh, H[PL], { Type: "Project", Project: name });
       return ok_();
     }
     case "project/delete": {
       const p = findProject(clean_(d.name, 100));
       if (!p) return fail_("Project unavailable.", 404);
-      deleteRows_(subtasksSh, read_(subtasksSh).filter(function (r) { return lc_(r.Project) === lc_(p.Project); }));
-      deleteRows_(projectsSh, [p]);
+      deleteRows_(plSh, [p].concat(rowsOf_("Subtask").filter(function (r) { return lc_(r.Project) === lc_(p.Project); })));
       return ok_();
     }
     case "common-subtask": {
       const name = clean_(d.name, 100);
       if (!name) return fail_("Enter a common subtask name.", 400);
-      if (read_(commonSh).some(function (r) { return lc_(r.Name) === lc_(name); })) return fail_("That common subtask already exists.", 409);
-      append_(commonSh, H.CommonSubtasks, { Name: name });
+      if (rowsOf_("Common").some(function (r) { return lc_(r.Subtask) === lc_(name); })) return fail_("That common subtask already exists.", 409);
+      append_(plSh, H[PL], { Type: "Common", Subtask: name });
       return ok_();
     }
     case "common-subtask/apply": {
       const okList = function (l) { return Array.isArray(l) && l.length > 0 && l.length <= 200 && l.every(function (x) { return typeof x === "string"; }); };
       if (!okList(d.projects) || !okList(d.subtasks)) return fail_("Select at least one project and one common subtask.", 400);
       const projects = d.projects.map(function (n) { const p = findProject(n); return p && p.Project; });
-      const commons = read_(commonSh);
-      const names = d.subtasks.map(function (n) { const c = commons.filter(function (r) { return lc_(r.Name) === lc_(n); })[0]; return c && c.Name; });
-      if (projects.indexOf(undefined) >= 0 || projects.indexOf("") >= 0 || names.indexOf(undefined) >= 0) return fail_("A selected project or common subtask is unavailable.", 400);
-      const existing = read_(subtasksSh);
+      const commons = rowsOf_("Common");
+      const names = d.subtasks.map(function (n) { const c = commons.filter(function (r) { return lc_(r.Subtask) === lc_(n); })[0]; return c && c.Subtask; });
+      if (projects.some(function (p) { return !p; }) || names.some(function (n) { return !n; })) return fail_("A selected project or common subtask is unavailable.", 400);
+      const existing = rowsOf_("Subtask");
       let added = 0;
       projects.filter(function (p, i) { return projects.indexOf(p) === i; }).forEach(function (p) {
         names.filter(function (n, i) { return names.indexOf(n) === i; }).forEach(function (n) {
-          if (existing.some(function (r) { return lc_(r.Project) === lc_(p) && lc_(r.Name) === lc_(n); })) return;
-          const rec = { SubtaskID: String(nextId_()), Project: p, Name: n };
-          append_(subtasksSh, H.Subtasks, rec); existing.push(rec); added++;
+          if (existing.some(function (r) { return lc_(r.Project) === lc_(p) && lc_(r.Subtask) === lc_(n); })) return;
+          const rec = { Type: "Subtask", ID: String(nextId_()), Project: p, Subtask: n };
+          append_(plSh, H[PL], rec); existing.push(rec); added++;
         });
       });
       return ok_({ added: added });
     }
     case "subtask": case "subtask/rename": case "subtask/delete": {
       const id = /^\d{1,9}$/.test(String(d.id)) ? String(Number(d.id)) : "";
-      const all = read_(subtasksSh);
+      const all = rowsOf_("Subtask");
       if (action === "subtask/delete") {
-        const s = all.filter(function (r) { return r.SubtaskID === id; })[0];
+        const s = all.filter(function (r) { return r.ID === id; })[0];
         if (!s) return fail_("Subtask unavailable.", 404);
-        deleteRows_(subtasksSh, [s]);
+        deleteRows_(plSh, [s]);
         return ok_();
       }
       const name = clean_(d.name, 100);
       if (!name) return fail_("Enter a subtask name.", 400);
       let project, current;
       if (action === "subtask/rename") {
-        current = all.filter(function (r) { return r.SubtaskID === id; })[0];
+        current = all.filter(function (r) { return r.ID === id; })[0];
         project = current && current.Project;
       } else {
         const p = findProject(clean_(d.project, 100));
         project = p && p.Project;
       }
       if (!project) return fail_("Project or subtask unavailable.", 404);
-      if (all.some(function (r) { return lc_(r.Project) === lc_(project) && lc_(r.Name) === lc_(name) && r.SubtaskID !== id; })) return fail_("That subtask already exists.", 409);
-      if (current) { current.Name = name; put_(subtasksSh, H.Subtasks, current); }
-      else append_(subtasksSh, H.Subtasks, { SubtaskID: String(nextId_()), Project: project, Name: name });
+      if (all.some(function (r) { return lc_(r.Project) === lc_(project) && lc_(r.Subtask) === lc_(name) && r.ID !== id; })) return fail_("That subtask already exists.", 409);
+      if (current) { current.Subtask = name; put_(plSh, H[PL], current); }
+      else append_(plSh, H[PL], { Type: "Subtask", ID: String(nextId_()), Project: project, Subtask: name });
       return ok_();
     }
     case "member": {
@@ -336,6 +366,8 @@ function handle_(action, d, token) {
       const stamp = String(Date.now());
       const tab = ss_().getSheetByName(u.SheetName);
       if (tab) { u.SheetName = tabName_(u.SheetName.slice(0, 50) + " (archived)", stamp); tab.setName(u.SheetName); }
+      const logSh = sheet_("UpdateLog", H.UpdateLog), oldId = u.UserID;
+      read_(logSh).filter(function (r) { return r.UserID === oldId; }).forEach(function (r) { r.UserID = oldId + "~" + stamp; put_(logSh, H.UpdateLog, r); });
       u.UserID = u.UserID + "~" + stamp; u.Active = "-1";
       put_(usersSh, H.Users, u);
       return ok_();
@@ -344,16 +376,31 @@ function handle_(action, d, token) {
       const okList = function (l) { return Array.isArray(l) && l.length > 0 && l.length <= 100 && l.every(function (x) { return typeof x === "string"; }); };
       if (!okList(d.projects) || !okList(d.employees)) return fail_("Select at least one project and one employee.", 400);
       const projects = d.projects.map(function (n) { const p = findProject(n); return p && p.Project; });
+      let added = 0;
       const users = read_(usersSh);
       const emps = d.employees.map(function (id) { return users.filter(function (r) { return r.UserID === id && r.Role === "employee" && r.Active === "1"; })[0]; });
       if (projects.some(function (p) { return !p; }) || emps.some(function (u) { return !u; })) return fail_("Choose existing projects and active employees.", 400);
       emps.filter(function (u, i) { return emps.indexOf(u) === i; }).forEach(function (u) {
         const sh = userSheet_(u), rows = read_(sh);
         projects.filter(function (p, i) { return projects.indexOf(p) === i; }).forEach(function (p) {
-          if (rows.some(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(p); })) return;
+          if (lc_(p) === "others") return;
+          // skip only if an OPEN round exists; if every earlier round is Done, this starts a new round (rework)
+          if (rows.some(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(p) && r.Status !== "Done"; })) return;
           append_(sh, TASK_H, { Type: "Task", ID: String(nextId_()), Project: p, Assigned: today, Due: "", Status: "Pending" });
+          added++;
         });
       });
+      return ok_({ added: added });
+    }
+    case "task/rework": {
+      const u = read_(usersSh).filter(function (r) { return r.UserID === clean_(d.user_id, 80) && r.Role === "employee" && r.Active === "1"; })[0];
+      if (!u) return fail_("Employee unavailable (disabled or archived).", 404);
+      const sh = userSheet_(u), rows = read_(sh);
+      const t = rows.filter(function (r) { return r.Type === "Task" && r.ID === String(Number(d.id)); })[0];
+      if (!t) return fail_("Task unavailable.", 404);
+      if (t.Status !== "Done") return fail_("Only a finished (Done) project can be reworked.", 400);
+      if (rows.some(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(t.Project) && r.Status !== "Done"; })) return fail_("A rework round is already open for this project.", 409);
+      append_(sh, TASK_H, { Type: "Task", ID: String(nextId_()), Project: t.Project, Assigned: today, Due: "", Status: "Pending" });
       return ok_();
     }
   }
@@ -363,22 +410,27 @@ function handle_(action, d, token) {
 function state_(me, today) {
   const admin = me.role === "admin";
   const users = read_(sheet_("Users", H.Users));
-  const subtasks = read_(sheet_("Subtasks", H.Subtasks)).sort(function (a, b) { return Number(a.SubtaskID) - Number(b.SubtaskID); });
+  const pl = read_(sheet_(PL, H[PL]));
+  const subtasks = pl.filter(function (r) { return r.Type === "Subtask"; })
+    .map(function (r) { return { SubtaskID: r.ID, Project: r.Project, Name: r.Subtask }; })
+    .sort(function (a, b) { return Number(a.SubtaskID) - Number(b.SubtaskID); });
   const targets = admin ? users.filter(function (u) { return u.Role === "employee"; }) : users.filter(function (u) { return u.UserID === me.id; });
   const tasks = [], progress = [], ss = ss_();
   targets.forEach(function (u) {
     const sh = ss.getSheetByName(u.SheetName);
     if (!sh) return;
-    const rows = read_(sh), saved = {};
-    rows.forEach(function (r) { if (r.Type === "Subtask") saved[r.ID] = r; });
-    rows.forEach(function (r) {
-      if (r.Type !== "Task") return;
-      const id = Number(r.ID);
+    const rows = read_(sh), saved = {}, counts = {};
+    rows.forEach(function (r) { if (r.Type === "Subtask") saved[subKey_(rows, r)] = r; });
+    rows.filter(function (r) { return r.Type === "Task" && lc_(r.Project) !== "others"; })   // "Others" is not a project: extra work is logged separately
+      .sort(function (a, b) { return Number(a.ID) - Number(b.ID); })
+      .forEach(function (r) {
+      const id = Number(r.ID), k = lc_(r.Project);
+      counts[k] = (counts[k] || 0) + 1;
       tasks.push({ id: id, name: r.Project, user_id: u.UserID, due: r.Due, status: STATUSES.indexOf(r.Status) >= 0 ? r.Status : "Pending", note: r.Notes,
-        project: r.Project, started: r.Started, completed: r.Completed, updated: r.Updated, assigned: r.Assigned, employee: u.Name });
+        project: r.Project, started: r.Started, completed: r.Completed, updated: r.Updated, assigned: r.Assigned, employee: u.Name, round: counts[k] });
       subtasks.forEach(function (s) {
         if (lc_(s.Project) !== lc_(r.Project)) return;
-        const p = saved[s.SubtaskID];
+        const p = saved[s.SubtaskID + "|" + id];
         progress.push({ id: Number(s.SubtaskID), name: s.Name, task_id: id, status: p && p.Status ? p.Status : "Pending", note: p ? p.Notes : "", updated: p ? p.Updated : "" });
       });
     });
@@ -387,16 +439,20 @@ function state_(me, today) {
   const byName = function (k) { return function (a, b) { return lc_(a[k]).localeCompare(lc_(b[k])); }; };
   const out = {
     user: { id: me.id, name: me.name, role: me.role }, today: today, tasks: tasks, progress: progress,
-    users: [], subtasks: [], commonSubtasks: [], projects: [], updates: [],
+    users: [], subtasks: [], commonSubtasks: [], projects: [], updates: [], extras: [],
   };
+  const log = read_(sheet_("UpdateLog", H.UpdateLog));
+  out.extras = log.filter(function (r) { return r.Status === "Extra" && (admin || r.UserID === me.id); }).reverse()
+    .map(function (r) { return { user_id: r.UserID, date: r.Date, note: r.CurrentWork }; })
+    .sort(function (a, b) { return b.date.localeCompare(a.date); });
   if (admin) {
     out.users = users.filter(function (u) { return u.Role === "employee" && Number(u.Active) >= 0; })
       .map(function (u) { return { id: u.UserID, name: u.Name, active: Number(u.Active) }; }).sort(byName("name"));
     out.subtasks = subtasks.map(function (s) { return { id: Number(s.SubtaskID), project: s.Project, name: s.Name }; });
-    out.commonSubtasks = read_(sheet_("CommonSubtasks", H.CommonSubtasks)).map(function (r) { return { name: r.Name }; }).sort(byName("name"));
-    out.projects = read_(sheet_("Projects", H.Projects)).map(function (r) { return { name: r.Project }; }).sort(byName("name"));
+    out.commonSubtasks = pl.filter(function (r) { return r.Type === "Common"; }).map(function (r) { return { name: r.Subtask }; }).sort(byName("name"));
+    out.projects = pl.filter(function (r) { return r.Type === "Project" && lc_(r.Project) !== "others"; }).map(function (r) { return { name: r.Project }; }).sort(byName("name"));
   } else {
-    out.updates = read_(sheet_("UpdateLog", H.UpdateLog)).filter(function (r) { return r.UserID === me.id; }).reverse()
+    out.updates = log.filter(function (r) { return r.UserID === me.id && r.Status !== "Extra"; }).reverse()
       .map(function (r) { return { task_id: Number(r.TaskID), date: r.Date, status: r.Status, pending: r.Pending, current_work: r.CurrentWork }; });
   }
   return out;
