@@ -13,9 +13,9 @@
 const SHEET_ID = "";            // empty = use the sheet this script was opened from. Or paste another sheet's ID here (the long code in its link between /d/ and /edit)
 const TZ = "Asia/Kolkata";
 const STATUSES = ["Pending", "In progress", "Done", "Delayed"];
-const ATTENDANCE_TYPES = ["Off", "First half", "Second half", "Permission", "Work from home"];
+const ATTENDANCE_TYPES = ["Off", "First half", "Second half", "Half day", "Permission", "Work from home"];
 const H = {
-  Attendance: ["Date", "Day", "UserID", "Name", "Status"],
+  Attendance: ["Date", "Day", "UserID", "Name", "Status", "Notes", "RecordID"],
   Users: ["UserID", "Name", "Role", "Active", "SheetName", "Created"],
   Config: ["Setting", "Value"],
   "Project List": ["Type", "ID", "Project", "Subtask"],   // Type = Project | Subtask | Common
@@ -299,62 +299,10 @@ function handle_(action, d, token) {
   const findProject = function (name) { return rowsOf_("Project").filter(function (r) { return lc_(r.Project) === lc_(name); })[0]; };
 
   switch (action) {
-    case "attendance/list": {
-      const month = clean_(d.month, 7);
-      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return fail_("Choose a valid month.", 400);
-      const members = new Set(read_(usersSh).filter(function (r) {
-        return r.Role === "employee" && r.Active === "1";
-      }).map(function (r) { return r.UserID; }));
-      const records = read_(sheet_("Attendance", H.Attendance)).filter(function (r) {
-        return members.has(r.UserID) && r.Date.startsWith(month + "-");
-      }).map(function (r) {
-        return {date:r.Date, day:r.Day, user_id:r.UserID, name:r.Name, status:r.Status};
-      });
-      return ok_({records:records});
-    }
-    case "attendance/save": {
-      const parseDate = function (date) {
-        if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-        const value = new Date(date + "T00:00:00Z");
-        return Number.isFinite(value.getTime()) && value.toISOString().slice(0, 10) === date ? value : null;
-      };
-      if (!ATTENDANCE_TYPES.includes(d.status)) return fail_("Choose an attendance status.", 400);
-      if (d.end_date && d.status !== "Off") return fail_("Date ranges are available for leave only.", 400);
-      const start = parseDate(d.date), end = parseDate(d.end_date || d.date);
-      const dayMs = 86400000;
-      if (!start || !end || end < start || end - start >= 366 * dayMs) return fail_("Choose a valid date range of up to 366 days.", 400);
-      const user = read_(usersSh).find(function (r) {
-        return r.UserID === d.user_id && r.Role === "employee" && r.Active === "1";
-      });
-      if (!user) return fail_("Choose an active employee.", 404);
-      const sh = sheet_("Attendance", H.Attendance);
-      const existing = new Map(read_(sh).filter(function (r) {
-        return r.UserID === user.UserID;
-      }).map(function (r) { return [r.Date, r]; }));
-      const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-      const newRows = [];
-      for (let time = start.getTime(); time <= end.getTime(); time += dayMs) {
-        const date = new Date(time);
-        const key = date.toISOString().slice(0, 10);
-        const record = {Date:key, Day:days[date.getUTCDay()], UserID:user.UserID, Name:user.Name, Status:d.status};
-        const previous = existing.get(key);
-        if (previous) {
-          record._row = previous._row;
-          put_(sh, H.Attendance, record);
-        } else {
-          newRows.push(record);
-        }
-      }
-      if (newRows.length) {
-        const first = sh.getLastRow() + 1;
-        const required = first + newRows.length - 1;
-        if (required > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), required - sh.getMaxRows());
-        sh.getRange(first, 1, newRows.length, H.Attendance.length).setValues(newRows.map(function (record) {
-          return H.Attendance.map(function (column) { return record[column]; });
-        }));
-      }
-      return ok_({days:(end - start) / dayMs + 1});
-    }
+    case "attendance/list":
+    case "attendance/save":
+    case "attendance/delete":
+      return attendance_(action, d, usersSh);
 
     case "project": {
       const name = clean_(d.name, 100);
@@ -543,6 +491,92 @@ function handle_(action, d, token) {
     }
   }
   return fail_("Page unavailable.", 404);
+}
+
+function attendanceKey_(row) {
+  return row.RecordID || JSON.stringify([row.UserID,row.Date]);
+}
+
+function attendance_(action, d, usersSh) {
+  const members = new Map(read_(usersSh).filter(function (row) {
+    return row.Role === "employee" && row.Active === "1";
+  }).map(function (row) { return [row.UserID,row]; }));
+  const sh = sheet_("Attendance", H.Attendance);
+  const rows = read_(sh);
+  const groups = new Map();
+  rows.forEach(function (row) {
+    if (!members.has(row.UserID)) return;
+    const key = attendanceKey_(row);
+    if (!groups.has(key)) groups.set(key,[]);
+    groups.get(key).push(row);
+  });
+
+  if (action === "attendance/list") {
+    const from = d.month, to = d.end_month || from;
+    const monthPattern = /^\d{4}-(0[1-9]|1[0-2])$/;
+    if (!monthPattern.test(from) || !monthPattern.test(to) || to < from) return fail_("Choose a valid month range.", 400);
+    const records = [];
+    groups.forEach(function (group,id) {
+      group.sort(function (a,b) { return a.Date.localeCompare(b.Date); });
+      const first = group[0], last = group[group.length-1];
+      const count = group.filter(function (row) {
+        const month = row.Date.slice(0,7);
+        return month >= from && month <= to;
+      }).length;
+      if (!count) return;
+      records.push({id:id,date:first.Date,end_date:last.Date,day:first.Day,days:group.length,count:count,
+        user_id:first.UserID,name:first.Name,status:/^(First|Second) half$/.test(first.Status) ? "Half day" : first.Status,
+        notes:first.Notes || ""});
+    });
+    return ok_({records:records});
+  }
+
+  const original = groups.get(d.id) || [];
+  if (d.id && !original.length) return fail_("Attendance record unavailable. Refresh and try again.", 404);
+  if (action === "attendance/delete") {
+    if (!original.length) return fail_("Choose a record to delete.", 400);
+    deleteRows_(sh, original);
+    return ok_();
+  }
+
+  function parseDate(date) {
+    if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    const value = new Date(date + "T00:00:00Z");
+    return Number.isFinite(value.getTime()) && value.toISOString().slice(0,10) === date ? value : null;
+  }
+  const start = parseDate(d.date), end = parseDate(d.end_date || d.date);
+  const dayMs = 86400000;
+  if (!start || !end || end < start || end - start >= 366 * dayMs) return fail_("Choose a valid date range of up to 366 days.", 400);
+  if (!ATTENDANCE_TYPES.includes(d.status)) return fail_("Choose an attendance status.", 400);
+  const user = members.get(d.user_id);
+  if (!user) return fail_("Choose an active employee.", 404);
+
+  const lastDate = d.end_date || d.date;
+  const overlap = rows.filter(function (row) {
+    return row.UserID === user.UserID && row.Date >= d.date && row.Date <= lastDate && !original.includes(row);
+  });
+  // Keep the single-day save behavior for an existing standalone record.
+  if (!d.id && d.date === lastDate && overlap.length === 1 && groups.get(attendanceKey_(overlap[0])).length === 1) {
+    original.push(overlap.pop());
+  }
+  if (overlap.length) return fail_("This employee already has attendance in that range. Edit the existing record or choose different dates.", 409);
+
+  sh.getRange(1, 6, 1, 2).setValues([H.Attendance.slice(5)]);
+  const id = original.length && original[0].RecordID || String(nextId_());
+  const notes = clean_(d.notes, 1000);
+  const safeNotes = notes.startsWith("=") ? "'" + notes : notes;
+  const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  const values = [];
+  for (let time = start.getTime(); time <= end.getTime(); time += dayMs) {
+    const date = new Date(time);
+    values.push([date.toISOString().slice(0,10),days[date.getUTCDay()],user.UserID,user.Name,d.status,safeNotes,id]);
+  }
+  const first = sh.getLastRow() + 1;
+  const required = first + values.length - 1;
+  if (required > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), required - sh.getMaxRows());
+  sh.getRange(first,1,values.length,H.Attendance.length).setValues(values);
+  deleteRows_(sh,original);
+  return ok_({days:values.length});
 }
 
 function state_(me, today) {

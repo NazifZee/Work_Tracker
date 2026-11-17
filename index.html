@@ -109,27 +109,37 @@
   <section id="attendance" hidden>
     <div class="intro"><h1>Attendance</h1><p>Record and review time away for active team members.</p></div>
     <form id="attendance-form" class="card stack">
-      <h2>Record attendance</h2>
+      <h2 id="attendance-form-title">Record attendance</h2>
+      <input type="hidden" name="id">
       <div class="attendance-fields">
         <label>Employee<select id="attendance-person" name="user_id" required></select></label>
         <label><span id="attendance-date-label">From date</span><input type="date" name="date" required></label>
         <label id="attendance-end">To date<input type="date" name="end_date"></label>
         <label>Status<select name="status" required>
           <option value="Off">Off / Leave</option>
-          <option value="First half">Half day · 1st half</option>
-          <option value="Second half">Half day · 2nd half</option>
+          <option value="Half day">Half day</option>
           <option value="Permission">Permission</option>
           <option value="Work from home">Work from home</option>
         </select></label>
-        <button class="primary">Save attendance</button>
+      </div>
+      <label>Notes<textarea name="notes" rows="2" maxlength="1000" placeholder="Reason or details"></textarea></label>
+      <div class="editor-actions">
+        <button class="primary" id="attendance-save">Save attendance</button>
+        <button type="button" id="attendance-cancel" hidden>Cancel edit</button>
       </div>
       <p id="attendance-feedback" role="status"></p>
     </form>
     <div class="card attendance-history stack">
       <div class="heading"><h2>Monthly records</h2><div class="attendance-fields">
-        <label>Month<input id="attendance-month" type="month" required></label>
+        <label>Period<select id="attendance-period">
+          <option value="month">One month</option><option value="range">Custom range</option>
+          <option value="3">Last 3 months</option><option value="6">Last 6 months</option>
+        </select></label>
+        <label id="attendance-month-label"><span id="attendance-month-caption">Month</span><input id="attendance-month" type="month"></label>
+        <label id="attendance-end-month-label" hidden>To month<input id="attendance-end-month" type="month"></label>
         <label>Employee<select id="attendance-filter"></select></label>
       </div></div>
+      <p id="attendance-period-caption"></p>
       <div id="attendance-counts" class="stats" aria-live="polite"></div>
       <div id="attendance-records"></div>
     </div>

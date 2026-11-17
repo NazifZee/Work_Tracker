@@ -656,70 +656,118 @@ for (const control of $$("[data-view]")) control.addEventListener("click",()=>{
   }
 });
 const attendanceLabels = {
-  Off:"Off / Leave",
-  "First half":"Half day · 1st half",
-  "Second half":"Half day · 2nd half",
-  Permission:"Permission",
-  "Work from home":"Work from home"
+  Off:"Off / Leave", "Half day":"Half day", Permission:"Permissions", "Work from home":"Work from home"
 };
+function editAttendance(row) {
+  const form = $("#attendance-form");
+  form.elements.id.value = row?.id || "";
+  if (row) {
+    form.elements.user_id.value = row.user_id;
+    form.elements.date.value = row.date;
+    form.elements.end_date.value = row.end_date;
+    form.elements.status.value = row.status;
+    form.elements.notes.value = row.notes;
+  }
+  $("#attendance-form-title").textContent = row ? "Edit attendance" : "Record attendance";
+  $("#attendance-save").textContent = row ? "Save changes" : "Save attendance";
+  $("#attendance-cancel").hidden = !row;
+  syncAttendanceRange();
+  if (row) {
+    $("#attendance-feedback").textContent = "";
+    form.scrollIntoView({block:"start"});
+    form.elements.notes.focus({preventScroll:true});
+  }
+}
 function drawAttendance() {
   const employee = $("#attendance-filter").value;
   const rows = attendanceRows.filter(row=>!employee || row.user_id === employee)
     .sort((a,b)=>b.date.localeCompare(a.date) || a.name.localeCompare(b.name));
-  const counts = {Off:0,"First half":0,"Second half":0,Permission:0,"Work from home":0};
-  for (const row of rows) if (Object.hasOwn(counts,row.status)) counts[row.status]++;
-  const summary = [
-    ["Off / Leave",counts.Off],
-    ["Half days",counts["First half"]+counts["Second half"]],
-    ["Permissions",counts.Permission],
-    ["Work from home",counts["Work from home"]]
-  ];
-  $("#attendance-counts").replaceChildren(...summary.map(([label,count])=>{
+  const counts = {Off:0,"Half day":0,Permission:0,"Work from home":0};
+  for (const row of rows) if (Object.hasOwn(counts,row.status)) counts[row.status] += row.count;
+  $("#attendance-counts").replaceChildren(...Object.entries(counts).map(([status,count])=>{
     const card = element("div",undefined,"stat");
-    card.append(element("span",label),element("strong",count));
-    if (label === "Half days") card.append(element("span",counts["First half"]+" first half · "+counts["Second half"]+" second half"));
+    card.append(element("span",attendanceLabels[status]),element("strong",count));
     return card;
   }));
-  table($("#attendance-records"),["Date","Day","Employee","Status","Manage"],rows.map(row=>[
-    row.date,row.day,row.name,tag(attendanceLabels[row.status] || row.status),button("Edit",()=>{
-      const form = $("#attendance-form");
-      form.elements.user_id.value = row.user_id;
-      form.elements.date.value = row.date;
-      form.elements.status.value = row.status;
-      form.elements.end_date.value = "";
-      syncAttendanceRange();
-      form.elements.status.focus();
-    })
-  ]),"No attendance records for this selection.");
+  table($("#attendance-records"),["From date","To date","Days in period","Employee","Status","Notes","Manage"],rows.map(row=>{
+    const actions = element("div",undefined,"editor-actions");
+    actions.append(button("Edit",()=>editAttendance(row)));
+    const remove = button("Delete",async()=>{
+      if (!confirm("Delete attendance for "+row.name+" from "+row.date+" to "+row.end_date+"?")) return;
+      remove.disabled = true;
+      try {
+        await api("attendance/delete",{id:row.id});
+        if (current !== "attendance") return;
+        if ($("#attendance-form").elements.id.value === row.id) editAttendance();
+        $("#attendance-feedback").textContent = "Attendance deleted.";
+        await loadAttendance();
+      } catch (error) {
+        $("#attendance-feedback").textContent = error.message;
+      } finally {
+        remove.disabled = false;
+      }
+    });
+    actions.append(remove);
+    return [row.date,row.end_date,row.count,row.name,tag(row.status==="Off" ? attendanceLabels.Off : row.status),row.notes || "—",actions];
+  }),"No attendance records for this selection.");
+}
+function attendanceMonths() {
+  const period = $("#attendance-period").value;
+  const preset = period === "3" || period === "6";
+  $("#attendance-month-label").hidden = preset;
+  $("#attendance-end-month-label").hidden = period !== "range";
+  $("#attendance-month-caption").textContent = period === "range" ? "From month" : "Month";
+  if (preset) {
+    const to = state.today.slice(0,7);
+    const [year,month] = to.split("-").map(Number);
+    const start = new Date(Date.UTC(year,month-Number(period),1));
+    return [start.toISOString().slice(0,7),to];
+  }
+  const from = $("#attendance-month").value;
+  if (period !== "range") return [from,from];
+  $("#attendance-end-month").min = from;
+  return [from,$("#attendance-end-month").value];
 }
 async function loadAttendance() {
   const request = ++attendanceRequest;
-  const month = $("#attendance-month").value;
+  const [month,end_month] = attendanceMonths();
   attendanceRows = [];
   $("#attendance-counts").replaceChildren();
-  $("#attendance-records").textContent = month ? "Loading attendance…" : "Choose a month.";
-  if (!month) return;
+  $("#attendance-period-caption").textContent = "";
+  if (!month || !end_month || end_month < month) {
+    $("#attendance-records").textContent = "Choose a valid month range.";
+    return;
+  }
+  $("#attendance-records").textContent = "Loading attendance…";
   try {
-    const result = await api("attendance/list",{month});
+    const result = await api("attendance/list",{month,end_month});
     if (request !== attendanceRequest || current !== "attendance") return;
     attendanceRows = result.records;
+    $("#attendance-period-caption").textContent = (month === end_month ? month : month+" to "+end_month)+" · Counts are calendar days within this period.";
     drawAttendance();
   } catch (error) {
     if (request === attendanceRequest) $("#attendance-records").textContent = error.message;
   }
 }
+$("#attendance-period").addEventListener("change",()=>{
+  $("#attendance-end-month").value ||= $("#attendance-month").value;
+  loadAttendance();
+});
 $("#attendance-month").addEventListener("change",loadAttendance);
+$("#attendance-end-month").addEventListener("change",loadAttendance);
 $("#attendance-filter").addEventListener("change",()=>{
   if ($("#attendance-counts").childElementCount) drawAttendance();
 });
 function syncAttendanceRange() {
   const form = $("#attendance-form");
-  const leave = form.elements.status.value === "Off";
-  $("#attendance-date-label").textContent = leave ? "From date" : "Date";
-  $("#attendance-end").hidden = !leave;
-  form.elements.end_date.disabled = !leave;
   form.elements.end_date.min = form.elements.date.value;
 }
+$("#attendance-cancel").addEventListener("click",()=>{
+  $("#attendance-form").reset();
+  $("#attendance-form").elements.date.value = state.today;
+  editAttendance();
+  $("#attendance-feedback").textContent = "";
+});
 $("#attendance-form").addEventListener("change",syncAttendanceRange);
 $("#attendance-form").addEventListener("submit",async event=>{
   event.preventDefault();
@@ -731,9 +779,8 @@ $("#attendance-form").addEventListener("submit",async event=>{
   try {
     const result = await api("attendance/save",record);
     if (current !== "attendance") return;
-    feedback.textContent = result.days > 1 ? "Attendance saved for "+result.days+" days." : "Attendance saved.";
-    $("#attendance-month").value = record.date.slice(0,7);
-    $("#attendance-filter").value = record.user_id;
+    feedback.textContent = "Attendance saved for "+result.days+(result.days === 1 ? " day." : " days.");
+    editAttendance();
     await loadAttendance();
   } catch (error) {
     feedback.textContent = error.message;
@@ -948,6 +995,7 @@ $("#logout").addEventListener("click",async()=>{
   catch (error) { if (state) return $("#notice").textContent=error.message; }
   state = undefined;
   attendanceRows = [];
+  editAttendance();
   for (const id of ["attendance-person","attendance-filter","attendance-counts","attendance-records","attendance-feedback"]) $("#"+id).replaceChildren();
   selected.clear();
   $("#batch-fields").replaceChildren();

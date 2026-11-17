@@ -93,7 +93,8 @@ db.Attendance=[];
 const attendanceSheet = {
   getLastRow:()=>db.Attendance.length+1,
   getMaxRows:()=>1000,
-  getRange:()=>({setValues:values=>values.forEach(row=>{
+  deleteRow:index=>db.Attendance.splice(index-2,1),
+  getRange:first=>({setValues:values=>first>1 && values.forEach(row=>{
     db.Attendance.push(Object.fromEntries(H.Attendance.map((column,index)=>[column,row[index]])));
   })})
 };
@@ -116,9 +117,24 @@ console.log('Passed: attendance permissions, date validation, monthly filtering 
 
 run("db.Users[0].Active='1'");
 assert.equal(attendance('save',{...record,status:'Off',date:'2026-11-30',end_date:'2026-12-02'}).data.days,3);
-assert.equal(attendance('list',{month:'2026-12'}).data.records.length,2);
+const december = attendance('list',{month:'2026-12'}).data.records;
+assert.equal(december.length,1);
+assert.equal(december[0].count,2);
+assert.equal(december[0].date,'2026-11-30');
+assert.equal(december[0].end_date,'2026-12-02');
+assert.equal(attendance('list',{month:'2026-11',end_month:'2026-12'}).data.records.find(row=>row.id===december[0].id).count,3);
 assert.equal(attendance('save',{...record,status:'Off',end_date:'2026-11-16'}).status,400);
-assert.equal(attendance('save',{...record,status:'Work from home',end_date:'2026-11-18'}).status,400);
-assert.equal(attendance('save',{...record,status:'Work from home',date:'2026-12-01'}).data.days,1);
-assert.equal(attendance('list',{month:'2026-12'}).data.records.filter(row=>row.status==='Work from home').length,1);
-console.log('Passed: inclusive leave ranges across months, Work from home, and range validation.');
+assert.equal(attendance('save',{...record,status:'Work from home',date:'2026-12-01'}).status,409);
+assert.equal(attendance('save',{...record,id:december[0].id,status:'Work from home',date:'2026-12-04',end_date:'2026-12-05',notes:'Remote setup'}).data.days,2);
+const edited = attendance('list',{month:'2026-12'}).data.records;
+assert.equal(edited.length,1);
+assert.equal(edited[0].notes,'Remote setup');
+assert.equal(edited[0].date,'2026-12-04');
+assert.equal(edited[0].status,'Work from home');
+assert.ok(attendance('delete',{id:edited[0].id}).data);
+assert.equal(attendance('list',{month:'2026-12'}).data.records.length,0);
+run("db.Attendance.push({UserID:'a',Date:'2026-12-10',Day:'Thursday',Status:'Second half'})");
+assert.equal(attendance('list',{month:'2026-12'}).data.records[0].status,'Half day');
+run("testUser={id:'a',role:'employee',name:'Alice'}");
+assert.equal(attendance('delete',{id:edited[0].id}).status,403);
+console.log('Passed: ranges and period counts, edits, notes, deletion, overlap checks, and legacy half days.');
