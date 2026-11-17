@@ -546,7 +546,12 @@ function renderCommonSubtasks() {
   $("button",form).disabled = !state.projects.length || !state.commonSubtasks.length;
 }
 async function refresh() {
-  state = await api("state");
+  const next = await api("state");
+  if (!next.user || !Array.isArray(next.tasks)) throw new Error("Invalid server response. Deploy the updated Code.gs web app and refresh.");
+  for (const key of ["progress","users","subtasks","commonSubtasks","projects","updates","extras"]) {
+    if (!Array.isArray(next[key])) next[key] = [];
+  }
+  state = next;
   const admin = state.user.role === "admin";
   $$("[data-admin]").forEach(node => { node.hidden = !admin; });
   $("#identity").textContent = state.user.name;
@@ -672,6 +677,51 @@ $("#period").addEventListener("change",event=>{
 });
 $("#print").addEventListener("click",()=>{ if ($("#report-date").reportValidity()) window.print(); });
 $("#new-member").addEventListener("click",()=>$("#member").showModal());
+const assignmentDrafts = new Map();
+function drawAssignmentSubtasks() {
+  const container = $("#assign-subtasks");
+  container.replaceChildren();
+  const projects = $$('#assign-projects input:checked').map(input=>input.value);
+  const employees = $$('#assign-employees input:checked').map(input=>input.value);
+  if (!projects.length || !employees.length) {
+    container.append(element("p","Select projects and employees to choose their subtasks."));
+    return;
+  }
+  for (const userId of employees) for (const project of projects) {
+    const key = JSON.stringify([userId,project]);
+    if (!assignmentDrafts.has(key)) assignmentDrafts.set(key,new Set());
+    const chosen = assignmentDrafts.get(key);
+    const group = element("fieldset",undefined,"task-editor assignment-subtasks");
+    group.dataset.userId = userId;
+    group.dataset.project = project;
+    group.append(element("legend",state.users.find(user=>user.id===userId).name+" — "+project));
+    const steps = state.subtasks.filter(step=>step.project===project);
+    if (!steps.length) group.append(element("p","No subtasks defined. This will assign the project itself."));
+    for (const step of steps) {
+      const label = element("label",undefined,"task-choice");
+      const input = element("input");
+      input.type = "checkbox";
+      input.value = String(step.id);
+      input.checked = chosen.has(input.value);
+      input.addEventListener("change",()=>input.checked ? chosen.add(input.value) : chosen.delete(input.value));
+      label.append(input,element("span",step.name));
+      group.append(label);
+    }
+    container.append(group);
+  }
+}
+for (const selector of ["#assign-projects","#assign-employees"]) $(selector).addEventListener("change",drawAssignmentSubtasks);
+function assignmentData(fields) {
+  if (state.assignmentVersion !== 1) throw new Error("Deploy the updated Code.gs as a new web app version, then refresh before assigning subtasks.");
+  const projects = fields.getAll("projects"), employees = fields.getAll("employees");
+  if (!projects.length || !employees.length) throw new Error("Select at least one project and one employee.");
+  const assignments = $$("#assign-subtasks fieldset").map(group=>{
+    const subtasks = $$("input:checked",group).map(input=>input.value);
+    if ($$("input",group).length && !subtasks.length) throw new Error("Choose at least one subtask for "+$("legend",group).textContent+".");
+    return {user_id:group.dataset.userId,project:group.dataset.project,subtasks};
+  });
+  return {projects,employees,assignments};
+}
 $("#new-task").addEventListener("click",()=>{
   if (!state.projects.length) return show("projects");
   const employees = state.users.filter(user=>user.active);
@@ -689,6 +739,9 @@ $("#new-task").addEventListener("click",()=>{
   }
   choices("#assign-projects","projects",state.projects.map(project=>[project.name,project.name]));
   choices("#assign-employees","employees",employees.map(user=>[user.id,user.name+" ("+user.id+")"]));
+  assignmentDrafts.clear();
+  $("#assign .form-error")?.remove();
+  drawAssignmentSubtasks();
   $("#assign").showModal();
 });
 $("#logout").addEventListener("click",async()=>{
@@ -726,12 +779,12 @@ for (const form of $$("form[data-action]")) {
     try {
       const fields = new FormData(form);
       const data = form.dataset.action === "task"
-        ? {projects:fields.getAll("projects"),employees:fields.getAll("employees")}
+        ? assignmentData(fields)
         : form.dataset.action === "common-subtask/apply"
           ? {projects:fields.getAll("projects"),subtasks:fields.getAll("subtasks")}
           : Object.fromEntries(fields);
       const result = await api(form.dataset.action,data);
-      if (form.dataset.action === "task") $("#notice").textContent = result.added ? "Assigned: "+result.added+" new task"+(result.added === 1 ? "" : "s")+"." : "Nothing new: those projects are already open for the selected employees.";
+      if (form.dataset.action === "task") $("#notice").textContent = (result.added || result.updated) ? "New assignments: "+(result.added || 0)+". Open assignments given additional subtasks: "+(result.updated || 0)+"." : "No changes: the selected work is already assigned.";
       if (form.dataset.action === "extra/add") $("#notice").textContent = "Extra work added.";
       if (form.dataset.action === "common-subtask/apply") $("#notice").textContent = result.added ? "Subtasks added: "+result.added : "The selected projects already have these subtasks.";
       form.closest("dialog")?.close();

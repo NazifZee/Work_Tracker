@@ -1,0 +1,50 @@
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const ctx = vm.createContext({console, CacheService:{getScriptCache:()=>({get:()=> 'admin'})}});
+vm.runInContext(fs.readFileSync('apps-script/Code.gs','utf8'),ctx);
+vm.runInContext(`
+let testUser = {id:'admin',role:'admin',name:'Admin'};
+let serial = 100;
+const db = {
+ Users:[{UserID:'a',Name:'Alice',Role:'employee',Active:'1',SheetName:'Alice'},{UserID:'b',Name:'Bob',Role:'employee',Active:'1',SheetName:'Bob'}],
+ 'Project List':[{Type:'Project',Project:'LATHE'},{Type:'Subtask',ID:'1',Project:'LATHE',Subtask:'Cut'},{Type:'Subtask',ID:'2',Project:'LATHE',Subtask:'Polish'},{Type:'Project',Project:'Other project'},{Type:'Subtask',ID:'3',Project:'Other project',Subtask:'Inspect'}],
+ Alice:[], Bob:[], UpdateLog:[]
+};
+me_ = ()=>testUser;
+today_ = ()=>'2026-11-17';
+sheet_ = name=>name;
+read_ = name=>db[name].map((r,i)=>({...r,_row:i+2}));
+userSheet_ = u=>u.SheetName || (u.id==='a'?'Alice':'Bob');
+append_ = (sh,h,r)=>db[sh].push({...r});
+put_ = (sh,h,r)=>db[sh][r._row-2]={...r};
+nextId_ = ()=>++serial;
+ss_ = ()=>({getSheetByName:name=>db[name]?name:null});
+`,ctx);
+const run = code=>vm.runInContext(code,ctx);
+const assign = (a,b)=>run(`handle_('task',{projects:['LATHE'],employees:['a','b'],assignments:[{user_id:'a',project:'LATHE',subtasks:${JSON.stringify(a)}},{user_id:'b',project:'LATHE',subtasks:${JSON.stringify(b)}}]},'token')`);
+assert.equal(assign(['1'],['2']).data.added,2);
+assert.equal(run("state_(testUser,today_()).progress.filter(s=>s.task_id===101).map(s=>s.id).join(',')"),'1');
+assert.equal(run("state_(testUser,today_()).progress.filter(s=>s.task_id===102).map(s=>s.id).join(',')"),'2');
+run("testUser={id:'a',role:'employee',name:'Alice'}");
+assert.equal(run("handle_('subtask/progress',{id:2,task_id:101,status:'Done',note:''},'token')").status,404);
+assert.ok(run("handle_('subtask/progress',{id:1,task_id:101,status:'Done',note:'saved'},'token')").data);
+run("testUser={id:'admin',role:'admin',name:'Admin'}");
+assert.equal(assign(['1','2'],['2']).data.updated,1);
+assert.equal(run("state_(testUser,today_()).progress.find(s=>s.task_id===101 && s.id===1).note"),'saved');
+assert.equal(assign(['1','2'],['2']).data.added,0);
+assert.equal(assign(['3'],['2']).status,400);
+assert.equal(assign([],['2']).status,400);
+assert.equal(run('db.Alice.length'),2);
+run("db.Alice[0].Status='Done'");
+assert.ok(run("handle_('task/rework',{id:101,user_id:'a'},'token')").data);
+assert.equal(run("db.Alice[2].AssignedSubtasks"),'["1","2"]');
+run("db.Bob[0].AssignedSubtasks=''");
+assert.equal(run("state_(testUser,today_()).progress.filter(s=>s.task_id===102).length"),2);
+assert.equal(assign(['1'],['1']).data.updated,0);
+assert.equal(run("db.Bob[0].AssignedSubtasks"),'');
+run("testUser={id:'a',role:'employee',name:'Alice'}");
+assert.equal(assign(['1'],['2']).status,403);
+assert.equal(run("state_(testUser,today_()).tasks.some(t=>t.user_id==='b')"),false);
+assert.equal(fs.readFileSync('Code.gs','utf8'),fs.readFileSync('apps-script/Code.gs','utf8'));
+console.log('Passed: per-person assignment, authorization, additive updates, progress preservation, validation, rework, legacy compatibility, employee isolation, synchronized backend copies.');

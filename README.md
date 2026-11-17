@@ -54,3 +54,18 @@ Open `index.html` on GitHub > pencil > edit > Commit. Live in about a minute. Th
 * Deleting an employee in the app keeps their tab (renamed "... (archived)") and their history.
 * Each click takes about 1-3 seconds (Google Sheets is slower than a real database). Fine for small teams.
 * Sign-ins last 6 hours.
+
+## Update: employee-specific subtasks
+
+1. Copy the entire `apps-script/Code.gs` into your existing Google Apps Script project's Code.gs. The root `Code.gs` is an identical convenience copy; use ONE copy, not both as separate script files.
+2. Save, then Deploy > Manage deployments > edit the existing web app > New version > Deploy. Keep the existing URL and access settings. No setup rerun is needed for this update.
+3. Upload `index.html`, `tracker.css`, `tracker.js`, and `config.js` together to your website. The configured backend URL is unchanged.
+4. Hard-refresh the page (Ctrl+Shift+R), sign in, and open Assign projects. Select projects and employees, then choose subtasks in each employee/project section. Projects with subtasks require at least one selection per person.
+
+New assignments show only the selected subtasks to that employee. Reassigning an open project adds selected subtasks and preserves saved progress. Rework carries forward the previous round's selection.
+
+Existing assignments with a blank AssignedSubtasks column retain their previous all-subtasks behavior. They are not narrowed automatically. The backend adds the AssignedSubtasks header to employee tabs when needed; do not delete existing rows or rebuild the sheet. Existing project definitions, employee accounts, and history remain in place.
+
+The new frontend blocks assignment against an older backend and displays deployment instructions instead of silently assigning every subtask. Deploy the backend before uploading the frontend.
+
+Local regression checks: `node tests/assignments.test.cjs` and `node --check tracker.js`. These use simulated Sheets data; live Google Apps Script deployment and live save behavior must be verified after deployment.

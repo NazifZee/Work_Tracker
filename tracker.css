@@ -46,3 +46,6 @@ dialog{width:min(460px,calc(100% - 26px));border:1px solid var(--line);border-ra
 .extra-items{display:grid;gap:6px;margin-top:8px}.extra-item{display:flex;gap:12px;align-items:baseline;padding:6px 10px;border-radius:8px;background:#f4f8fc}.extra-item b{flex:none;font-size:12px;color:#1d5a85}.extra-item span{white-space:pre-wrap;overflow-wrap:anywhere}
 .extra-card{margin-bottom:16px;display:grid;gap:14px}.extra-row{display:flex;flex-wrap:wrap;gap:12px;align-items:start}.extra-row label{min-width:150px}.extra-row .grow{flex:1 1 280px}.extra-card form button{justify-self:start}.extra-card h3{margin:0;font-size:15px}#report-extras h3{margin:22px 0 0;font-size:16px}
 
+
+#assign{width:min(680px,calc(100vw - 32px));max-height:90vh;overflow-y:auto}
+.assignment-subtasks{min-width:0;display:grid;gap:10px}.assignment-subtasks legend{overflow-wrap:anywhere}.assignment-help{font-size:13px;color:var(--muted)}

@@ -20,7 +20,7 @@ const H = {
   UpdateLog: ["Date", "UserID", "TaskID", "Status", "Pending", "CurrentWork"],
 };
 const PL = "Project List";
-const TASK_H = ["Type", "ID", "Project", "Subtask", "Assigned", "Due", "Status", "Started", "Completed", "Updated", "Notes", "TaskID"];
+const TASK_H = ["Type", "ID", "Project", "Subtask", "Assigned", "Due", "Status", "Started", "Completed", "Updated", "Notes", "TaskID", "AssignedSubtasks"];
 const SESSION_SECONDS = 21600; // 6 hours (Apps Script cache maximum)
 
 /* ------------------------------------------------------------------ */
@@ -157,9 +157,14 @@ function checkAdmin_(pw) {
 function userSheet_(u) {
   let sh = ss_().getSheetByName(u.SheetName);
   if (!sh) sh = sheet_(u.SheetName, TASK_H);
-  const last = sh.getRange(1, TASK_H.length);
-  if (String(last.getValue()) !== "TaskID") last.setValue("TaskID");   // older tabs get the new column header
+  const last = sh.getRange(1, 12);
+  if (String(last.getValue()) !== "TaskID") last.setValue("TaskID");
+  if (String(sh.getRange(1, 13).getValue()) !== "AssignedSubtasks") sh.getRange(1, 13).setValue("AssignedSubtasks");   // older tabs get the new column header
   return sh;
+}
+// Blank means a legacy assignment: retain its original all-subtasks behavior.
+function assignedSubtask_(task, id) {
+  return !task.AssignedSubtasks || JSON.parse(task.AssignedSubtasks).map(String).indexOf(String(id)) >= 0;
 }
 /** id of the first (oldest) round of a project in one employee tab */
 function firstTaskId_(rows, project) {
@@ -261,7 +266,7 @@ function handle_(action, d, token) {
     const sub = sub0 && { SubtaskID: sub0.ID, Project: sub0.Project, Name: sub0.Subtask };
     const sh = userSheet_(me), rows = read_(sh);
     const task = rows.filter(function (r) { return r.Type === "Task" && r.ID === String(Number(d.task_id)); })[0];
-    if (!sub || !task || lc_(task.Project) !== lc_(sub.Project)) return fail_("Subtask unavailable.", 404);
+    if (!sub || !task || lc_(task.Project) !== lc_(sub.Project) || !assignedSubtask_(task, sub.SubtaskID)) return fail_("Subtask unavailable.", 404);
     const prev = rows.filter(function (r) { return r.Type === "Subtask" && subKey_(rows, r) === sub.SubtaskID + "|" + task.ID; })[0];
     const rec = { Type: "Subtask", ID: sub.SubtaskID, Project: sub.Project, Subtask: sub.Name, Status: status, Updated: today, Notes: clean_(d.note, 3000), TaskID: task.ID };
     if (prev) { rec._row = prev._row; put_(sh, TASK_H, rec); } else append_(sh, TASK_H, rec);
@@ -376,22 +381,46 @@ function handle_(action, d, token) {
       const okList = function (l) { return Array.isArray(l) && l.length > 0 && l.length <= 100 && l.every(function (x) { return typeof x === "string"; }); };
       if (!okList(d.projects) || !okList(d.employees)) return fail_("Select at least one project and one employee.", 400);
       const projects = d.projects.map(function (n) { const p = findProject(n); return p && p.Project; });
-      let added = 0;
-      const users = read_(usersSh);
+      const users = read_(usersSh), subs = rowsOf_("Subtask");
       const emps = d.employees.map(function (id) { return users.filter(function (r) { return r.UserID === id && r.Role === "employee" && r.Active === "1"; })[0]; });
-      if (projects.some(function (p) { return !p; }) || emps.some(function (u) { return !u; })) return fail_("Choose existing projects and active employees.", 400);
-      emps.filter(function (u, i) { return emps.indexOf(u) === i; }).forEach(function (u) {
-        const sh = userSheet_(u), rows = read_(sh);
-        projects.filter(function (p, i) { return projects.indexOf(p) === i; }).forEach(function (p) {
-          if (lc_(p) === "others") return;
-          // skip only if an OPEN round exists; if every earlier round is Done, this starts a new round (rework)
-          if (rows.some(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(p) && r.Status !== "Done"; })) return;
-          append_(sh, TASK_H, { Type: "Task", ID: String(nextId_()), Project: p, Assigned: today, Due: "", Status: "Pending" });
-          added++;
-        });
+      if (projects.some(function (p) { return !p || lc_(p) === "others"; }) || emps.some(function (u) { return !u; })) return fail_("Choose existing projects and active employees.", 400);
+      const explicit = d.assignments !== undefined;
+      if (explicit && (!Array.isArray(d.assignments) || d.assignments.length !== projects.length * emps.length)) return fail_("Choose subtasks for every employee and project.", 400);
+      const plans = [];
+      for (const u of emps) for (const p of projects) {
+        const available = subs.filter(function (s) { return lc_(s.Project) === lc_(p); }).map(function (s) { return String(s.ID); });
+        let ids = available;
+        if (explicit) {
+          const matches = d.assignments.filter(function (a) { return a && a.user_id === u.UserID && a.project === p; });
+          if (matches.length !== 1 || !Array.isArray(matches[0].subtasks)) return fail_("Choose subtasks for every employee and project.", 400);
+          ids = matches[0].subtasks.map(String);
+          if ((available.length && !ids.length) || ids.some(function (id) { return available.indexOf(id) < 0; })) return fail_("Select at least one valid subtask for " + u.Name + " / " + p + ".", 400);
+        }
+        plans.push({user: u, project: p, ids: Array.from(new Set(ids))});
+      }
+      let added = 0, updated = 0;
+      plans.forEach(function (plan) {
+        const sh = userSheet_(plan.user), rows = read_(sh);
+        const open = rows.find(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(plan.project) && r.Status !== "Done"; });
+        if (open) {
+          // Keep legacy assignments and saved progress; new selections only add work.
+          if (explicit && open.AssignedSubtasks) {
+            const previous = JSON.parse(open.AssignedSubtasks).map(String);
+            const merged = Array.from(new Set(previous.concat(plan.ids)));
+            if (merged.length !== previous.length) {
+              open.AssignedSubtasks = JSON.stringify(merged);
+              put_(sh, TASK_H, open);
+              updated++;
+            }
+          }
+          return;
+        }
+        append_(sh, TASK_H, {Type: "Task", ID: String(nextId_()), Project: plan.project, Assigned: today, Due: "", Status: "Pending", AssignedSubtasks: explicit ? JSON.stringify(plan.ids) : ""});
+        added++;
       });
-      return ok_({ added: added });
+      return ok_({added: added, updated: updated});
     }
+
     case "task/rework": {
       const u = read_(usersSh).filter(function (r) { return r.UserID === clean_(d.user_id, 80) && r.Role === "employee" && r.Active === "1"; })[0];
       if (!u) return fail_("Employee unavailable (disabled or archived).", 404);
@@ -400,7 +429,7 @@ function handle_(action, d, token) {
       if (!t) return fail_("Task unavailable.", 404);
       if (t.Status !== "Done") return fail_("Only a finished (Done) project can be reworked.", 400);
       if (rows.some(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(t.Project) && r.Status !== "Done"; })) return fail_("A rework round is already open for this project.", 409);
-      append_(sh, TASK_H, { Type: "Task", ID: String(nextId_()), Project: t.Project, Assigned: today, Due: "", Status: "Pending" });
+      append_(sh, TASK_H, { Type: "Task", ID: String(nextId_()), Project: t.Project, Assigned: today, Due: "", Status: "Pending", AssignedSubtasks: t.AssignedSubtasks || "" });
       return ok_();
     }
   }
@@ -429,7 +458,7 @@ function state_(me, today) {
       tasks.push({ id: id, name: r.Project, user_id: u.UserID, due: r.Due, status: STATUSES.indexOf(r.Status) >= 0 ? r.Status : "Pending", note: r.Notes,
         project: r.Project, started: r.Started, completed: r.Completed, updated: r.Updated, assigned: r.Assigned, employee: u.Name, round: counts[k] });
       subtasks.forEach(function (s) {
-        if (lc_(s.Project) !== lc_(r.Project)) return;
+        if (lc_(s.Project) !== lc_(r.Project) || !assignedSubtask_(r, s.SubtaskID)) return;
         const p = saved[s.SubtaskID + "|" + id];
         progress.push({ id: Number(s.SubtaskID), name: s.Name, task_id: id, status: p && p.Status ? p.Status : "Pending", note: p ? p.Notes : "", updated: p ? p.Updated : "" });
       });
@@ -438,7 +467,7 @@ function state_(me, today) {
   tasks.sort(function (a, b) { return (a.due || "").localeCompare(b.due || "") || b.id - a.id; });
   const byName = function (k) { return function (a, b) { return lc_(a[k]).localeCompare(lc_(b[k])); }; };
   const out = {
-    user: { id: me.id, name: me.name, role: me.role }, today: today, tasks: tasks, progress: progress,
+    assignmentVersion: 1, user: { id: me.id, name: me.name, role: me.role }, today: today, tasks: tasks, progress: progress,
     users: [], subtasks: [], commonSubtasks: [], projects: [], updates: [], extras: [],
   };
   const log = read_(sheet_("UpdateLog", H.UpdateLog));
