@@ -270,7 +270,7 @@ function drawTasks() {
 function subtaskUpdate(taskId, id, changes) {
   const status = ["Done","In progress","Delayed","Pending"].find(value=>Object.hasOwn(changes,value));
   if (!status) throw new Error("Select a subtask status before saving.");
-  const note = status === "Done" ? "" : Object.entries(changes)
+  const note = status === "Done" ? changes.Done.trim() : Object.entries(changes)
     .map(([key,value])=>key+(value.trim() ? ": "+value.trim() : "")).join("\n");
   return {id,task_id:taskId,status,note};
 }
@@ -299,7 +299,8 @@ function subtaskEditor(task, draft, steps) {
     card.append(element("legend",step.name));
     const choices = element("div",undefined,"work-status-options");
     const inputs = element("div",undefined,"work-note-grid");
-    const labels = {Pending:"Pending work","In progress":"Current work",Delayed:"Finish task notes"};
+    const labels = {Pending:"Pending work","In progress":"Current work",Done:"Finish task notes"};
+    if (step.status === "Delayed") labels.Delayed = "Saved delayed notes";
     for (const [status,noteLabel] of Object.entries(labels)) {
       const label = element("label",undefined,"task-choice");
       const checkbox = element("input");
@@ -310,13 +311,19 @@ function subtaskEditor(task, draft, steps) {
         markEdited();
         if (!checkbox.checked) delete change[status];
         else {
-          delete change.Done;
-          change[status] = "";
+          if (status === "Done") {
+            const note = change.Delayed ?? step.note ?? "";
+            for (const key of Object.keys(change)) delete change[key];
+            change.Done = note;
+          } else {
+            delete change.Done;
+            change[status] = "";
+          }
         }
         drawBatch();
         document.getElementById(checkbox.id)?.focus();
       });
-      label.append(checkbox,element("span",status === "Delayed" ? "Finish task" : status));
+      label.append(checkbox,element("span",status === "Done" ? "Finish task" : status));
       choices.append(label);
       if (!checkbox.checked || !noteLabel) continue;
       const notes = element("textarea");
@@ -332,7 +339,7 @@ function subtaskEditor(task, draft, steps) {
     const saveStep = async (control, complete = false)=>{
       control.disabled = true;
       try {
-        await api("subtask/progress",subtaskUpdate(task.id,step.id,complete ? {Done:""} : change));
+        await api("subtask/progress",subtaskUpdate(task.id,step.id,complete ? {Done:change.Done ?? change.Delayed ?? step.note ?? ""} : change));
         draft.openSteps.delete(step.id);
         draft.editedSteps?.delete(step.id);
         delete draft.steps[step.id];
