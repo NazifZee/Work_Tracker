@@ -49,3 +49,5 @@ dialog{width:min(460px,calc(100% - 26px));border:1px solid var(--line);border-ra
 
 #assign{width:min(680px,calc(100vw - 32px));max-height:90vh;overflow-y:auto}
 .assignment-subtasks{min-width:0;display:grid;gap:10px}.assignment-subtasks legend{overflow-wrap:anywhere}.assignment-help{font-size:13px;color:var(--muted)}
+
+#manage-assignments{width:min(720px,calc(100vw - 32px));max-height:90vh;overflow-y:auto}.managed-assignment{min-width:0;display:grid;gap:10px}.managed-assignment legend{max-width:100%;overflow-wrap:anywhere}

@@ -100,6 +100,13 @@
 <p class="assignment-help">Choose subtasks separately for each employee. Existing open assignments keep their current subtasks and progress; selected subtasks are added.</p>
 <footer><button type="button" data-close>Cancel</button><button class="primary">Assign projects</button></footer>
 </form></dialog>
+<dialog id="manage-assignments"><form class="stack" data-action="assignments/update">
+<h2 id="manage-assignments-title">Manage assignments</h2>
+<input type="hidden" name="user_id">
+<p>Check the projects and subtasks this person should see. Uncheck a project to remove it from their view. Saved progress is kept if you restore it later. A project can have no assigned subtasks.</p>
+<div id="manage-assignment-options" class="stack"></div>
+<footer><button type="button" data-close>Cancel</button><button class="primary">Save assignments</button></footer>
+</form></dialog>
 <dialog id="member"><form class="stack" data-action="member">
 <h2>Add employee</h2><p>A new sheet tab with this name is created for them. They sign in with the user ID only.</p><label>Name<input name="name" maxlength="100" required></label><label>User ID<input name="id" pattern="[a-zA-Z0-9._\-]{3,40}" required></label>
 <footer><button type="button" data-close>Cancel</button><button class="primary">Add employee</button></footer>

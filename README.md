@@ -69,3 +69,7 @@ Existing assignments with a blank AssignedSubtasks column retain their previous 
 The new frontend blocks assignment against an older backend and displays deployment instructions instead of silently assigning every subtask. Deploy the backend before uploading the frontend.
 
 Local regression checks: `node tests/assignments.test.cjs` and `node --check tracker.js`. These use simulated Sheets data; live Google Apps Script deployment and live save behavior must be verified after deployment.
+
+## Edit an employee's assignments
+
+In Team access, click Edit assignments beside the employee. Check or uncheck projects and their subtasks, then save. Removed work is hidden from the employee. Restoring the same assignment brings back its saved progress. Use Assign projects when assigning to multiple employees at once.

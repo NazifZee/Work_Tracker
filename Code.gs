@@ -20,7 +20,7 @@ const H = {
   UpdateLog: ["Date", "UserID", "TaskID", "Status", "Pending", "CurrentWork"],
 };
 const PL = "Project List";
-const TASK_H = ["Type", "ID", "Project", "Subtask", "Assigned", "Due", "Status", "Started", "Completed", "Updated", "Notes", "TaskID", "AssignedSubtasks"];
+const TASK_H = ["Type", "ID", "Project", "Subtask", "Assigned", "Due", "Status", "Started", "Completed", "Updated", "Notes", "TaskID", "AssignedSubtasks", "Removed"];
 const SESSION_SECONDS = 21600; // 6 hours (Apps Script cache maximum)
 
 /* ------------------------------------------------------------------ */
@@ -160,6 +160,7 @@ function userSheet_(u) {
   const last = sh.getRange(1, 12);
   if (String(last.getValue()) !== "TaskID") last.setValue("TaskID");
   if (String(sh.getRange(1, 13).getValue()) !== "AssignedSubtasks") sh.getRange(1, 13).setValue("AssignedSubtasks");   // older tabs get the new column header
+  if (String(sh.getRange(1, 14).getValue()) !== "Removed") sh.getRange(1, 14).setValue("Removed");
   return sh;
 }
 // Blank means a legacy assignment: retain its original all-subtasks behavior.
@@ -242,7 +243,7 @@ function handle_(action, d, token) {
     const targets = list.map(function (it) {
       return rows.filter(function (r) { return r.Type === "Task" && r.ID === String(Number(it.id)); })[0];
     });
-    if (targets.some(function (t) { return !t; })) return fail_("One or more tasks are unavailable.", 404);
+    if (targets.some(function (t) { return !t || t.Removed === "1"; })) return fail_("One or more tasks are unavailable.", 404);
     const log = sheet_("UpdateLog", H.UpdateLog);
     list.forEach(function (it, i) {
       const t = targets[i], pending = (it.pending || "").trim(), note = it.note.trim();
@@ -266,7 +267,7 @@ function handle_(action, d, token) {
     const sub = sub0 && { SubtaskID: sub0.ID, Project: sub0.Project, Name: sub0.Subtask };
     const sh = userSheet_(me), rows = read_(sh);
     const task = rows.filter(function (r) { return r.Type === "Task" && r.ID === String(Number(d.task_id)); })[0];
-    if (!sub || !task || lc_(task.Project) !== lc_(sub.Project) || !assignedSubtask_(task, sub.SubtaskID)) return fail_("Subtask unavailable.", 404);
+    if (!sub || !task || task.Removed === "1" || lc_(task.Project) !== lc_(sub.Project) || !assignedSubtask_(task, sub.SubtaskID)) return fail_("Subtask unavailable.", 404);
     const prev = rows.filter(function (r) { return r.Type === "Subtask" && subKey_(rows, r) === sub.SubtaskID + "|" + task.ID; })[0];
     const rec = { Type: "Subtask", ID: sub.SubtaskID, Project: sub.Project, Subtask: sub.Name, Status: status, Updated: today, Notes: clean_(d.note, 3000), TaskID: task.ID };
     if (prev) { rec._row = prev._row; put_(sh, TASK_H, rec); } else append_(sh, TASK_H, rec);
@@ -401,7 +402,7 @@ function handle_(action, d, token) {
       let added = 0, updated = 0;
       plans.forEach(function (plan) {
         const sh = userSheet_(plan.user), rows = read_(sh);
-        const open = rows.find(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(plan.project) && r.Status !== "Done"; });
+        const open = rows.find(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(plan.project) && r.Status !== "Done" && r.Removed !== "1"; });
         if (open) {
           // Keep legacy assignments and saved progress; new selections only add work.
           if (explicit && open.AssignedSubtasks) {
@@ -421,14 +422,50 @@ function handle_(action, d, token) {
       return ok_({added: added, updated: updated});
     }
 
+    case "assignments/update": {
+      const u = read_(usersSh).find(function (r) { return r.UserID === d.user_id && r.Role === "employee" && Number(r.Active) >= 0; });
+      if (!u) return fail_("Employee unavailable.", 404);
+      if (!Array.isArray(d.assignments) || d.assignments.length > 500) return fail_("Invalid assignments.", 400);
+      const sh = userSheet_(u), rows = read_(sh), subs = rowsOf_("Subtask"), seen = {};
+      const plans = [];
+      for (const a of d.assignments) {
+        if (!a || typeof a.enabled !== "boolean" || !Array.isArray(a.subtasks)) return fail_("Invalid assignment selection.", 400);
+        const task = a.id ? rows.find(function (r) { return r.Type === "Task" && r.ID === String(a.id); }) : null;
+        const project = task ? task.Project : (findProject(a.project) || {}).Project;
+        const key = task ? "task:" + task.ID : "project:" + lc_(project);
+        if ((a.id && !task) || !project || lc_(project) === "others" || seen[key]) return fail_("Project or assignment unavailable.", 400);
+        seen[key] = true;
+        const ids = Array.from(new Set(a.subtasks.map(String)));
+        const available = subs.filter(function (r) { return lc_(r.Project) === lc_(project); }).map(function (r) { return String(r.ID); });
+        if (a.enabled && ids.some(function (id) { return available.indexOf(id) < 0; })) return fail_("A selected subtask is unavailable. Refresh and try again.", 400);
+        if (!task && a.enabled && rows.some(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(project); })) return fail_("This project is already listed. Update its existing assignment.", 409);
+        plans.push({task:task,project:project,ids:ids,enabled:a.enabled});
+      }
+      // All selections are validated before changing any assignment. Progress rows are never deleted.
+      plans.forEach(function (plan) {
+        if (plan.task) {
+          const t = plan.task;
+          if (plan.enabled) {
+            const added = plan.ids.some(function (id) { return !assignedSubtask_(t,id); });
+            t.AssignedSubtasks = JSON.stringify(plan.ids);
+            if (added && t.Status === "Done") { t.Status = "In progress"; t.Completed = ""; }
+          }
+          t.Removed = plan.enabled ? "" : "1";
+          put_(sh,TASK_H,t);
+        } else if (plan.enabled) {
+          append_(sh,TASK_H,{Type:"Task",ID:String(nextId_()),Project:plan.project,Assigned:today,Status:"Pending",AssignedSubtasks:JSON.stringify(plan.ids)});
+        }
+      });
+      return ok_();
+    }
     case "task/rework": {
       const u = read_(usersSh).filter(function (r) { return r.UserID === clean_(d.user_id, 80) && r.Role === "employee" && r.Active === "1"; })[0];
       if (!u) return fail_("Employee unavailable (disabled or archived).", 404);
       const sh = userSheet_(u), rows = read_(sh);
       const t = rows.filter(function (r) { return r.Type === "Task" && r.ID === String(Number(d.id)); })[0];
-      if (!t) return fail_("Task unavailable.", 404);
+      if (!t || t.Removed === "1") return fail_("Task unavailable.", 404);
       if (t.Status !== "Done") return fail_("Only a finished (Done) project can be reworked.", 400);
-      if (rows.some(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(t.Project) && r.Status !== "Done"; })) return fail_("A rework round is already open for this project.", 409);
+      if (rows.some(function (r) { return r.Type === "Task" && lc_(r.Project) === lc_(t.Project) && r.Status !== "Done" && r.Removed !== "1"; })) return fail_("A rework round is already open for this project.", 409);
       append_(sh, TASK_H, { Type: "Task", ID: String(nextId_()), Project: t.Project, Assigned: today, Due: "", Status: "Pending", AssignedSubtasks: t.AssignedSubtasks || "" });
       return ok_();
     }
@@ -444,7 +481,7 @@ function state_(me, today) {
     .map(function (r) { return { SubtaskID: r.ID, Project: r.Project, Name: r.Subtask }; })
     .sort(function (a, b) { return Number(a.SubtaskID) - Number(b.SubtaskID); });
   const targets = admin ? users.filter(function (u) { return u.Role === "employee"; }) : users.filter(function (u) { return u.UserID === me.id; });
-  const tasks = [], progress = [], ss = ss_();
+  const tasks = [], progress = [], assignmentTasks = [], ss = ss_();
   targets.forEach(function (u) {
     const sh = ss.getSheetByName(u.SheetName);
     if (!sh) return;
@@ -455,6 +492,9 @@ function state_(me, today) {
       .forEach(function (r) {
       const id = Number(r.ID), k = lc_(r.Project);
       counts[k] = (counts[k] || 0) + 1;
+      if (admin) assignmentTasks.push({id:id,user_id:u.UserID,project:r.Project,round:counts[k],removed:r.Removed === "1",status:r.Status,
+        subtasks:subtasks.filter(function (s) { return lc_(s.Project) === k && assignedSubtask_(r,s.SubtaskID); }).map(function (s) { return String(s.SubtaskID); })});
+      if (r.Removed === "1") return;
       tasks.push({ id: id, name: r.Project, user_id: u.UserID, due: r.Due, status: STATUSES.indexOf(r.Status) >= 0 ? r.Status : "Pending", note: r.Notes,
         project: r.Project, started: r.Started, completed: r.Completed, updated: r.Updated, assigned: r.Assigned, employee: u.Name, round: counts[k] });
       subtasks.forEach(function (s) {
@@ -467,7 +507,7 @@ function state_(me, today) {
   tasks.sort(function (a, b) { return (a.due || "").localeCompare(b.due || "") || b.id - a.id; });
   const byName = function (k) { return function (a, b) { return lc_(a[k]).localeCompare(lc_(b[k])); }; };
   const out = {
-    assignmentVersion: 1, user: { id: me.id, name: me.name, role: me.role }, today: today, tasks: tasks, progress: progress,
+    assignmentVersion: 2, assignmentTasks: assignmentTasks, user: { id: me.id, name: me.name, role: me.role }, today: today, tasks: tasks, progress: progress,
     users: [], subtasks: [], commonSubtasks: [], projects: [], updates: [], extras: [],
   };
   const log = read_(sheet_("UpdateLog", H.UpdateLog));
@@ -481,7 +521,7 @@ function state_(me, today) {
     out.commonSubtasks = pl.filter(function (r) { return r.Type === "Common"; }).map(function (r) { return { name: r.Subtask }; }).sort(byName("name"));
     out.projects = pl.filter(function (r) { return r.Type === "Project" && lc_(r.Project) !== "others"; }).map(function (r) { return { name: r.Project }; }).sort(byName("name"));
   } else {
-    out.updates = log.filter(function (r) { return r.UserID === me.id && r.Status !== "Extra"; }).reverse()
+    out.updates = log.filter(function (r) { return r.UserID === me.id && r.Status !== "Extra" && tasks.some(function (t) { return String(t.id) === String(r.TaskID); }); }).reverse()
       .map(function (r) { return { task_id: Number(r.TaskID), date: r.Date, status: r.Status, pending: r.Pending, current_work: r.CurrentWork }; });
   }
   return out;

@@ -595,7 +595,7 @@ async function refresh() {
   ]),"No projects yet.");
   table($("#member-list"),["Employee","User ID","Access","Manage"],state.users.map(user=>{
     const actions = element("div",undefined,"member-actions");
-    actions.append(button(user.active?"Disable":"Enable",async()=>{
+    actions.append(button("Edit assignments",()=>openAssignments(user)),button(user.active?"Disable":"Enable",async()=>{
       try { await api("access",{id:user.id,active:!user.active}); await refresh(); }
       catch(error) { $("#notice").textContent=error.message; }
     }),button("Delete",async()=>{
@@ -677,6 +677,62 @@ $("#period").addEventListener("change",event=>{
 });
 $("#print").addEventListener("click",()=>{ if ($("#report-date").reportValidity()) window.print(); });
 $("#new-member").addEventListener("click",()=>$("#member").showModal());
+function openAssignments(user) {
+  if (state.assignmentVersion !== 2) { $("#notice").textContent = "Deploy the latest Code.gs, then refresh to manage assignments."; return; }
+  const dialog = $("#manage-assignments");
+  $(".form-error",dialog)?.remove();
+  $('input[name="user_id"]',dialog).value = user.id;
+  $("#manage-assignments-title").textContent = "Assignments — "+user.name+" ("+user.id+")";
+  const entries = state.assignmentTasks.filter(task=>task.user_id===user.id);
+  const projects = new Set(entries.map(task=>task.project));
+  const options = entries.concat(state.projects.filter(project=>!projects.has(project.name)).map(project=>({project:project.name,removed:true,subtasks:[]})));
+  const container = $("#manage-assignment-options");
+  container.replaceChildren();
+  for (const entry of options) {
+    const group = element("fieldset",undefined,"task-editor managed-assignment");
+    group.dataset.id = entry.id || "";
+    group.dataset.project = entry.project;
+    const legend = element("legend");
+    const label = element("label",undefined,"task-choice");
+    const enabled = element("input");
+    enabled.type = "checkbox";
+    enabled.className = "project-enabled";
+    enabled.checked = !entry.removed;
+    label.append(enabled,element("span",entry.project+(entry.round ? " · Round "+entry.round+" · "+entry.status : " · New assignment")));
+    legend.append(label); group.append(legend);
+    const steps = state.subtasks.filter(step=>step.project===entry.project);
+    for (const step of steps) {
+      const label = element("label",undefined,"task-choice");
+      const input = element("input");
+      input.type = "checkbox"; input.value = String(step.id); input.className = "managed-subtask";
+      input.checked = entry.subtasks.includes(String(step.id)); input.disabled = !enabled.checked;
+      label.append(input,element("span",step.name)); group.append(label);
+    }
+    if (!steps.length) group.append(element("p","No subtasks defined for this project."));
+    enabled.addEventListener("change",()=>$$('.managed-subtask',group).forEach(input=>input.disabled=!enabled.checked));
+    group.dataset.original = JSON.stringify(readManagedAssignment(group));
+    container.append(group);
+  }
+  if (!options.length) container.append(element("p","Create a project first in Projects."));
+  dialog.showModal();
+}
+function readManagedAssignment(group) {
+  const enabled = $(".project-enabled",group).checked;
+  return {
+    id:group.dataset.id || undefined,
+    project:group.dataset.project,
+    enabled,
+    subtasks:enabled ? $$(".managed-subtask:checked",group).map(input=>input.value) : []
+  };
+}
+function managedAssignmentData(fields) {
+  const assignments = [];
+  for (const group of $$("#manage-assignment-options fieldset")) {
+    const entry = readManagedAssignment(group);
+    if (JSON.stringify(entry) !== group.dataset.original) assignments.push(entry);
+  }
+  return {user_id:fields.get("user_id"),assignments};
+}
 const assignmentDrafts = new Map();
 function drawAssignmentSubtasks() {
   const container = $("#assign-subtasks");
@@ -694,7 +750,7 @@ function drawAssignmentSubtasks() {
     const group = element("fieldset",undefined,"task-editor assignment-subtasks");
     group.dataset.userId = userId;
     group.dataset.project = project;
-    group.append(element("legend",state.users.find(user=>user.id===userId).name+" � "+project));
+    group.append(element("legend",state.users.find(user=>user.id===userId).name+" — "+project));
     const steps = state.subtasks.filter(step=>step.project===project);
     if (!steps.length) group.append(element("p","No subtasks defined. This will assign the project itself."));
     for (const step of steps) {
@@ -712,7 +768,7 @@ function drawAssignmentSubtasks() {
 }
 for (const selector of ["#assign-projects","#assign-employees"]) $(selector).addEventListener("change",drawAssignmentSubtasks);
 function assignmentData(fields) {
-  if (state.assignmentVersion !== 1) throw new Error("Deploy the updated Code.gs as a new web app version, then refresh before assigning subtasks.");
+  if (state.assignmentVersion < 1) throw new Error("Deploy the updated Code.gs as a new web app version, then refresh before assigning subtasks.");
   const projects = fields.getAll("projects"), employees = fields.getAll("employees");
   if (!projects.length || !employees.length) throw new Error("Select at least one project and one employee.");
   const assignments = $$("#assign-subtasks fieldset").map(group=>{
@@ -780,11 +836,14 @@ for (const form of $$("form[data-action]")) {
       const fields = new FormData(form);
       const data = form.dataset.action === "task"
         ? assignmentData(fields)
+        : form.dataset.action === "assignments/update"
+          ? managedAssignmentData(fields)
         : form.dataset.action === "common-subtask/apply"
           ? {projects:fields.getAll("projects"),subtasks:fields.getAll("subtasks")}
           : Object.fromEntries(fields);
       const result = await api(form.dataset.action,data);
       if (form.dataset.action === "task") $("#notice").textContent = (result.added || result.updated) ? "New assignments: "+(result.added || 0)+". Open assignments given additional subtasks: "+(result.updated || 0)+"." : "No changes: the selected work is already assigned.";
+      if (form.dataset.action === "assignments/update") $("#notice").textContent = "Assignments updated. This employee will see only their selected projects and subtasks after refreshing.";
       if (form.dataset.action === "extra/add") $("#notice").textContent = "Extra work added.";
       if (form.dataset.action === "common-subtask/apply") $("#notice").textContent = result.added ? "Subtasks added: "+result.added : "The selected projects already have these subtasks.";
       form.closest("dialog")?.close();
