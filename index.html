@@ -51,14 +51,14 @@
         <label data-admin>Employee<select id="employee-filter"></select></label>
       </div>
       <div id="task-list"></div>
-      <form id="batch-form" class="stack" hidden><h2>Selected task updates</h2><div id="batch-fields" class="stack"></div><button class="primary">Save selected updates</button></form>
+      <form id="batch-form" class="stack" hidden><h2>Selected task updates</h2><div id="batch-fields" class="stack"></div><button class="primary">Save selected updates</button><div id="batch-feedback" class="form-error" role="alert"></div></form>
       <div id="task-suggestions"><h2>Unfinished tasks</h2><p>Review pending, in-progress, and delayed work from earlier dates.</p><div id="suggestion-list"></div></div>
       
     </div>
   </section>
   <section id="projects" hidden>
-    <div class="intro"><h1>Projects</h1></div>
-    <form class="card stack" data-action="project"><label>Project name<input name="name" maxlength="100" required></label><button class="primary">Create project</button></form>
+    <div class="intro"><h1>Projects</h1><p>Manage projects and their subtask templates.</p></div>
+    <form class="card stack" data-action="project"><h2>Create a project</h2><label>Project name<input name="name" maxlength="100" required></label><button class="primary">Create project</button></form>
     <div class="card common-subtasks">
       <h2>Common subtasks</h2>
       <form class="toolbar" data-action="common-subtask">
@@ -73,7 +73,7 @@
         <button class="primary">Add selected subtasks</button>
       </form>
     </div>
-    <div class="card" id="project-list"></div>
+    <div class="card project-catalog"><h2>Project list</h2><div id="project-list"></div></div>
   </section>
   <section id="people" hidden>
     <div class="intro heading"><div><h1>Team access</h1><p>Add employees (each gets their own sheet tab) and manage who can sign in.</p></div><button class="primary" id="new-member">+ Add employee</button></div>

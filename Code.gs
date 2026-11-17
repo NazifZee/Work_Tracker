@@ -271,6 +271,12 @@ function handle_(action, d, token) {
     const prev = rows.filter(function (r) { return r.Type === "Subtask" && subKey_(rows, r) === sub.SubtaskID + "|" + task.ID; })[0];
     const rec = { Type: "Subtask", ID: sub.SubtaskID, Project: sub.Project, Subtask: sub.Name, Status: status, Updated: today, Notes: clean_(d.note, 3000), TaskID: task.ID };
     if (prev) { rec._row = prev._row; put_(sh, TASK_H, rec); } else append_(sh, TASK_H, rec);
+    task.Updated = today;
+    if (status !== "Pending" && task.Status === "Pending") {
+      task.Status = "In progress";
+      task.Started = task.Started || today;
+    }
+    put_(sh, TASK_H, task);
     return ok_();
   }
 

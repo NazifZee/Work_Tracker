@@ -29,6 +29,9 @@ assert.equal(run("state_(testUser,today_()).progress.filter(s=>s.task_id===102).
 run("testUser={id:'a',role:'employee',name:'Alice'}");
 assert.equal(run("handle_('subtask/progress',{id:2,task_id:101,status:'Done',note:''},'token')").status,404);
 assert.ok(run("handle_('subtask/progress',{id:1,task_id:101,status:'Done',note:'saved'},'token')").data);
+assert.equal(run("db.Alice[0].Status"),"In progress");
+assert.equal(run("db.Alice[0].Started"),"2026-11-17");
+assert.equal(run("db.Alice[0].Updated"),"2026-11-17");
 run("testUser={id:'admin',role:'admin',name:'Admin'}");
 assert.equal(assign(['1','2'],['2']).data.updated,1);
 assert.equal(run("state_(testUser,today_()).progress.find(s=>s.task_id===101 && s.id===1).note"),'saved');

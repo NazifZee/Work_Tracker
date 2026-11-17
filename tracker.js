@@ -263,6 +263,13 @@ function drawTasks() {
   const backlog = visible.filter(task => task.status !== "Done" && workDate(task) && workDate(task) < state.today);
   table($("#suggestion-list"),headers,taskRows(backlog,true,!admin),"No unfinished work from earlier dates.");
 }
+function subtaskUpdate(taskId, id, changes) {
+  const status = ["Done","In progress","Delayed","Pending"].find(value=>Object.hasOwn(changes,value));
+  if (!status) throw new Error("Select a subtask status before saving.");
+  const note = status === "Done" ? "" : Object.entries(changes)
+    .map(([key,value])=>key+(value.trim() ? ": "+value.trim() : "")).join("\n");
+  return {id,task_id:taskId,status,note};
+}
 function subtaskEditor(task, draft, steps) {
   const group = element("div",undefined,"stack");
   group.append(element("strong","Subtasks"));
@@ -283,6 +290,7 @@ function subtaskEditor(task, draft, steps) {
     if (!draft.openSteps.has(step.id)) continue;
 
     const change = draft.steps[step.id] ??= {[step.status]:step.note || ""};
+    const markEdited = ()=> (draft.editedSteps ??= new Set()).add(step.id);
     const card = element("fieldset",undefined,"task-editor stack");
     card.append(element("legend",step.name));
     const choices = element("div",undefined,"work-status-options");
@@ -295,6 +303,7 @@ function subtaskEditor(task, draft, steps) {
       checkbox.checked = Object.hasOwn(change,status);
       checkbox.id = control.id+"-"+status.replaceAll(" ","-");
       checkbox.addEventListener("change",()=>{
+        markEdited();
         if (!checkbox.checked) delete change[status];
         else {
           if (status === "Done") Object.keys(change).forEach(key=>delete change[key]);
@@ -311,30 +320,35 @@ function subtaskEditor(task, draft, steps) {
       notes.rows = 2;
       notes.maxLength = 900;
       notes.value = change[status];
-      notes.addEventListener("input",()=>{change[status]=notes.value;});
+      notes.addEventListener("input",()=>{change[status]=notes.value; markEdited();});
       const field = element("label",noteLabel);
       field.append(notes);
       inputs.append(field);
     }
     card.append(choices,inputs);
-    const save = button("Save subtask progress",async()=>{
-      save.disabled = true;
+    const saveStep = async (control, complete = false)=>{
+      control.disabled = true;
       try {
-        const status = ["Done","In progress","Delayed","Pending"].find(value=>Object.hasOwn(change,value));
-        if (!status) throw new Error("Select at least one work status.");
-        const note = status === "Done" ? "" : Object.entries(change).map(([key,value])=>key+": "+value.trim()).join("\n");
-        await api("subtask/progress",{id:step.id,task_id:task.id,status,note});
+        await api("subtask/progress",subtaskUpdate(task.id,step.id,complete ? {Done:""} : change));
         draft.openSteps.delete(step.id);
+        draft.editedSteps?.delete(step.id);
         delete draft.steps[step.id];
         await refresh();
-        $("#notice").textContent = "Subtask progress saved.";
+        $("#notice").textContent = complete ? "Subtask marked done." : "Subtask progress saved.";
       } catch (error) {
         $("#notice").textContent = error.message;
       } finally {
-        save.disabled = false;
+        control.disabled = false;
       }
-    });
-    card.append(save);
+    };
+    const save = button("Save subtask progress",()=>saveStep(save));
+    const actions = element("div",undefined,"editor-actions");
+    actions.append(save);
+    if (step.status !== "Done") {
+      const complete = button("Mark subtask done",()=>saveStep(complete,true));
+      actions.append(complete);
+    }
+    card.append(actions);
     editor.append(card);
   }
   group.append(row,editor);
@@ -352,12 +366,17 @@ function drawBatch() {
     panel.append(element("legend",(task.project || task.name)+" · "+task.employee),element("p","Saved status: "+status(task)));
     const steps = state.progress.filter(step=>step.task_id===task.id && (state.user.role !== "admin" || !$("#subtask-filter").value || String(step.id)===$("#subtask-filter").value));
     if (steps.length) {
-      panel.append(subtaskEditor(task,draft,steps));
+      if (!Object.hasOwn(draft.activities,"Done")) panel.append(subtaskEditor(task,draft,steps));
       const label = element("label",undefined,"task-choice");
       const done = element("input");
       done.type = "checkbox";
       done.checked = draft.activities.Done !== undefined;
-      done.addEventListener("change",()=>{draft.activities = done.checked ? {Done:""} : {};});
+      done.addEventListener("change",()=>{
+        draft.activities = done.checked ? {Done:""} : {};
+        drawBatch();
+        $("#project-done-"+task.id)?.focus();
+      });
+      done.id = "project-done-"+task.id;
       label.append(done,element("span","Mark project Done"));
       panel.append(label,button("Remove selection",()=>{
         selected.delete(task.id);
@@ -626,22 +645,30 @@ for (const selector of ["#project-filter","#subtask-filter","#employee-filter"])
 $("#batch-form").addEventListener("submit",async event=>{
   event.preventDefault();
   const submit = event.submitter;
+  const feedback = $("#batch-feedback");
+  feedback.textContent = "";
   submit.disabled = true;
   try {
-    const updates = [...selected.values()].filter(draft=>!state.progress.some(step=>step.task_id===draft.id) || Object.hasOwn(draft.activities,"Done")).map(draft=>{
+    const drafts = [...selected.values()];
+    const subtaskUpdates = drafts.flatMap(draft=>[...(draft.editedSteps || [])]
+      .map(id=>({draft,id,data:subtaskUpdate(draft.id,id,draft.steps[id])})));
+    const updates = drafts.filter(draft=>Object.keys(draft.activities).length).map(draft=>{
       const statuses = Object.keys(draft.activities);
-      if (!statuses.length) throw new Error("Select at least one work status for each project.");
       const status = ["In progress","Delayed","Pending","Done"].find(value=>statuses.includes(value));
       const note = statuses.map(value=>value+(draft.activities[value].trim() ? ": "+draft.activities[value].trim() : ""));
       return {id:draft.id,status,note:note.join("\n"),pending:draft.activities.Pending ?? ""};
     });
-    if (!updates.length) throw new Error("Mark a project Done or use Save subtask progress.");
-    await api("batch",{updates});
+    if (!updates.length && !subtaskUpdates.length) throw new Error("Change a subtask status or note, or select a project status before saving.");
+    for (const {draft,id,data} of subtaskUpdates) {
+      await api("subtask/progress",data);
+      draft.editedSteps.delete(id);
+    }
+    if (updates.length) await api("batch",{updates});
     selected.clear();
     await refresh();
     $("#notice").textContent = "Task updates saved.";
   } catch(error) {
-    $("#notice").textContent = error.message;
+    feedback.textContent = error.message;
   } finally {
     submit.disabled = false;
   }
