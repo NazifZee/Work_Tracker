@@ -644,6 +644,7 @@ for (const control of $$("[data-view]")) control.addEventListener("click",()=>{
     setOptions("#attendance-filter",employees);
     $('#attendance-form input[name="date"]').value ||= state.today;
     $("#attendance-month").value ||= state.today.slice(0,7);
+    syncAttendanceRange();
     loadAttendance();
   }
 });
@@ -651,18 +652,20 @@ const attendanceLabels = {
   Off:"Off / Leave",
   "First half":"Half day · 1st half",
   "Second half":"Half day · 2nd half",
-  Permission:"Permission"
+  Permission:"Permission",
+  "Work from home":"Work from home"
 };
 function drawAttendance() {
   const employee = $("#attendance-filter").value;
   const rows = attendanceRows.filter(row=>!employee || row.user_id === employee)
     .sort((a,b)=>b.date.localeCompare(a.date) || a.name.localeCompare(b.name));
-  const counts = {Off:0,"First half":0,"Second half":0,Permission:0};
+  const counts = {Off:0,"First half":0,"Second half":0,Permission:0,"Work from home":0};
   for (const row of rows) if (Object.hasOwn(counts,row.status)) counts[row.status]++;
   const summary = [
     ["Off / Leave",counts.Off],
     ["Half days",counts["First half"]+counts["Second half"]],
-    ["Permissions",counts.Permission]
+    ["Permissions",counts.Permission],
+    ["Work from home",counts["Work from home"]]
   ];
   $("#attendance-counts").replaceChildren(...summary.map(([label,count])=>{
     const card = element("div",undefined,"stat");
@@ -676,6 +679,8 @@ function drawAttendance() {
       form.elements.user_id.value = row.user_id;
       form.elements.date.value = row.date;
       form.elements.status.value = row.status;
+      form.elements.end_date.value = "";
+      syncAttendanceRange();
       form.elements.status.focus();
     })
   ]),"No attendance records for this selection.");
@@ -700,6 +705,15 @@ $("#attendance-month").addEventListener("change",loadAttendance);
 $("#attendance-filter").addEventListener("change",()=>{
   if ($("#attendance-counts").childElementCount) drawAttendance();
 });
+function syncAttendanceRange() {
+  const form = $("#attendance-form");
+  const leave = form.elements.status.value === "Off";
+  $("#attendance-date-label").textContent = leave ? "From date" : "Date";
+  $("#attendance-end").hidden = !leave;
+  form.elements.end_date.disabled = !leave;
+  form.elements.end_date.min = form.elements.date.value;
+}
+$("#attendance-form").addEventListener("change",syncAttendanceRange);
 $("#attendance-form").addEventListener("submit",async event=>{
   event.preventDefault();
   const submit = event.submitter;
@@ -708,9 +722,9 @@ $("#attendance-form").addEventListener("submit",async event=>{
   submit.disabled = true;
   feedback.textContent = "";
   try {
-    await api("attendance/save",record);
+    const result = await api("attendance/save",record);
     if (current !== "attendance") return;
-    feedback.textContent = "Attendance saved.";
+    feedback.textContent = result.days > 1 ? "Attendance saved for "+result.days+" days." : "Attendance saved.";
     $("#attendance-month").value = record.date.slice(0,7);
     $("#attendance-filter").value = record.user_id;
     await loadAttendance();

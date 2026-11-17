@@ -87,7 +87,20 @@ const record = {user_id:'a',date:'2026-11-17',status:'First half'};
 run("testUser={id:'a',role:'employee',name:'Alice'}");
 assert.equal(attendance('save',record).status,403);
 assert.equal(attendance('list',{month:'2026-11'}).status,403);
-run("testUser={id:'admin',role:'admin',name:'Admin'}; db.Attendance=[]");
+run(`
+testUser={id:'admin',role:'admin',name:'Admin'};
+db.Attendance=[];
+const attendanceSheet = {
+  getLastRow:()=>db.Attendance.length+1,
+  getMaxRows:()=>1000,
+  getRange:()=>({setValues:values=>values.forEach(row=>{
+    db.Attendance.push(Object.fromEntries(H.Attendance.map((column,index)=>[column,row[index]])));
+  })})
+};
+sheet_ = name=>name==='Attendance'?attendanceSheet:name;
+read_ = sheet=>db[sheet===attendanceSheet?'Attendance':sheet].map((r,i)=>({...r,_row:i+2}));
+put_ = (sheet,headers,row)=>db[sheet===attendanceSheet?'Attendance':sheet][row._row-2]={...row};
+`);
 assert.equal(attendance('save',{...record,date:'2026-02-30'}).status,400);
 assert.ok(attendance('save',record).data);
 assert.equal(attendance('list',{month:'2026-11'}).data.records[0].day,'Tuesday');
@@ -100,3 +113,12 @@ run("db.Users[0].Active='0'");
 assert.equal(attendance('save',record).status,404);
 assert.equal(attendance('list',{month:'2026-11'}).data.records.length,0);
 console.log('Passed: attendance permissions, date validation, monthly filtering and updates.');
+
+run("db.Users[0].Active='1'");
+assert.equal(attendance('save',{...record,status:'Off',date:'2026-11-30',end_date:'2026-12-02'}).data.days,3);
+assert.equal(attendance('list',{month:'2026-12'}).data.records.length,2);
+assert.equal(attendance('save',{...record,status:'Off',end_date:'2026-11-16'}).status,400);
+assert.equal(attendance('save',{...record,status:'Work from home',end_date:'2026-11-18'}).status,400);
+assert.equal(attendance('save',{...record,status:'Work from home',date:'2026-12-01'}).data.days,1);
+assert.equal(attendance('list',{month:'2026-12'}).data.records.filter(row=>row.status==='Work from home').length,1);
+console.log('Passed: inclusive leave ranges across months, Work from home, and range validation.');

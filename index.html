@@ -86,12 +86,14 @@
       <h2>Record attendance</h2>
       <div class="attendance-fields">
         <label>Employee<select id="attendance-person" name="user_id" required></select></label>
-        <label>Date<input type="date" name="date" required></label>
+        <label><span id="attendance-date-label">From date</span><input type="date" name="date" required></label>
+        <label id="attendance-end">To date<input type="date" name="end_date"></label>
         <label>Status<select name="status" required>
           <option value="Off">Off / Leave</option>
           <option value="First half">Half day · 1st half</option>
           <option value="Second half">Half day · 2nd half</option>
           <option value="Permission">Permission</option>
+          <option value="Work from home">Work from home</option>
         </select></label>
         <button class="primary">Save attendance</button>
       </div>

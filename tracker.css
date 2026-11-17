@@ -193,3 +193,21 @@ dialog{width:min(460px,calc(100% - 26px));border:1px solid var(--line);border-ra
   #login .intro { background:linear-gradient(145deg,#284338,#182721); }
   .primary { background:linear-gradient(120deg,#a0e5c6,#68c8a5); }
 }
+@media screen {
+  :root {
+    background:#11191e;
+  }
+  body {
+    background:radial-gradient(ellipse at 78% 0%,#2b4a40 0%,transparent 56%),
+      radial-gradient(ellipse at 100% 82%,#27374e 0%,transparent 58%),#11191e;
+    background-attachment:fixed;
+  }
+  .card,.stat,dialog,.user-card {
+    background:linear-gradient(145deg,#d3eff113,#b1c8de06),#14202770;
+    border-color:#c5dde52e;
+    backdrop-filter:blur(14px);
+    box-shadow:0 8px 24px #080e151f,inset 0 1px 0 #e3f6ff0a;
+  }
+  #attendance .stat { border-top-color:#c5dde52e; }
+  #attendance-records .tag.work.from.home { background:#294648; color:#afe6e3; }
+}
