@@ -81,3 +81,22 @@ assert.equal(run("state_(testUser,today_()).progress.filter(s=>s.task_id===101).
 assert.ok(manage('b',[{id:102,enabled:true,subtasks:['2']}]).data);
 assert.equal(run("state_(testUser,today_()).progress.filter(s=>s.task_id===102).map(s=>s.id).join(',')"),'2');
 console.log('Passed: exact subtask edits, project removal/restoration, retained notes, reopening completed work, user isolation, authorization, new projects, duplicate protection, validation before writes, empty subtask selections, legacy narrowing.');
+
+const attendance = (action,data)=>run(`handle_('attendance/${action}',${JSON.stringify(data)},'token')`);
+const record = {user_id:'a',date:'2026-11-17',status:'First half'};
+run("testUser={id:'a',role:'employee',name:'Alice'}");
+assert.equal(attendance('save',record).status,403);
+assert.equal(attendance('list',{month:'2026-11'}).status,403);
+run("testUser={id:'admin',role:'admin',name:'Admin'}; db.Attendance=[]");
+assert.equal(attendance('save',{...record,date:'2026-02-30'}).status,400);
+assert.ok(attendance('save',record).data);
+assert.equal(attendance('list',{month:'2026-11'}).data.records[0].day,'Tuesday');
+assert.ok(attendance('save',{...record,status:'Permission'}).data);
+const records = attendance('list',{month:'2026-11'}).data.records;
+assert.equal(records.length,1);
+assert.equal(records[0].status,'Permission');
+assert.equal(attendance('list',{month:'2026-10'}).data.records.length,0);
+run("db.Users[0].Active='0'");
+assert.equal(attendance('save',record).status,404);
+assert.equal(attendance('list',{month:'2026-11'}).data.records.length,0);
+console.log('Passed: attendance permissions, date validation, monthly filtering and updates.');

@@ -15,6 +15,7 @@
   <nav id="nav" hidden>
     <button data-view="tasks">▤ &nbsp; Tasks</button>
     <button data-view="projects" data-admin>▧ &nbsp; Projects</button><button data-view="people" data-admin>♙ &nbsp; Team access</button>
+    <button data-view="attendance" data-admin hidden>▦ &nbsp; Attendance</button>
     <button data-view="reports">▥ &nbsp; Reports</button>
   </nav>
   <div id="profile" hidden><strong id="identity"></strong><small id="role"></small><button id="password-button">Change password</button><button id="logout">Sign out</button></div>
@@ -78,6 +79,32 @@
   <section id="people" hidden>
     <div class="intro heading"><div><h1>Team access</h1><p>Add employees (each gets their own sheet tab) and manage who can sign in.</p></div><button class="primary" id="new-member">+ Add employee</button></div>
     <div class="card" id="member-list"></div>
+  </section>
+  <section id="attendance" hidden>
+    <div class="intro"><h1>Attendance</h1><p>Record and review time away for active team members.</p></div>
+    <form id="attendance-form" class="card stack">
+      <h2>Record attendance</h2>
+      <div class="attendance-fields">
+        <label>Employee<select id="attendance-person" name="user_id" required></select></label>
+        <label>Date<input type="date" name="date" required></label>
+        <label>Status<select name="status" required>
+          <option value="Off">Off / Leave</option>
+          <option value="First half">Half day · 1st half</option>
+          <option value="Second half">Half day · 2nd half</option>
+          <option value="Permission">Permission</option>
+        </select></label>
+        <button class="primary">Save attendance</button>
+      </div>
+      <p id="attendance-feedback" role="status"></p>
+    </form>
+    <div class="card attendance-history stack">
+      <div class="heading"><h2>Monthly records</h2><div class="attendance-fields">
+        <label>Month<input id="attendance-month" type="month" required></label>
+        <label>Employee<select id="attendance-filter"></select></label>
+      </div></div>
+      <div id="attendance-counts" class="stats" aria-live="polite"></div>
+      <div id="attendance-records"></div>
+    </div>
   </section>
   <section id="reports" hidden>
     <div class="intro heading"><div><h1>Reports</h1><p>View or export project work for a day or month.</p></div><div class="toolbar"><button id="csv">Export CSV</button><button class="primary" id="print">Export PDF</button></div></div>

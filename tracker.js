@@ -3,6 +3,8 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 let state;
 let current = "login";
 const selected = new Map();
+let attendanceRequest = 0;
+let attendanceRows = [];
 
 
 const TOKEN_KEY = "tracker_token";
@@ -37,11 +39,13 @@ async function api(action, data) {
   return result.data ?? {};
 }
 function show(view) {
+  if (view === "attendance" && state?.user.role !== "admin") return;
+  if (view !== "attendance") attendanceRequest++;
   current = view;
-  for (const pane of ["login","tasks","projects","people","reports"]) $("#" + pane).hidden = view !== pane;
+  for (const pane of ["login","tasks","projects","people","reports","attendance"]) $("#" + pane).hidden = view !== pane;
   $("#nav").hidden = $("#profile").hidden = $("#reload").hidden = view === "login";
   $("#today").textContent = state?.today ?? "";
-  $("#location").textContent = {login:"Sign in",tasks:"Tasks",projects:"Projects",people:"Team access",reports:"Reports"}[view];
+  $("#location").textContent = {login:"Sign in",tasks:"Tasks",projects:"Projects",people:"Team access",reports:"Reports",attendance:"Attendance"}[view];
   for (const button of $$("[data-view]")) {
     if (button.dataset.view === view) button.setAttribute("aria-current","page");
     else button.removeAttribute("aria-current");
@@ -598,7 +602,7 @@ async function refresh() {
   setOptions("#employee-filter",state.users.map(user=>[user.id,user.name+" ("+user.id+")"]));
   for (const id of selected.keys()) if (!state.tasks.some(task=>task.id===id)) selected.delete(id);
   drawBatch();
-  show(current === "login" || (!admin && ["people","projects"].includes(current)) ? "tasks" : current);
+  show(current === "login" || (!admin && ["people","projects","attendance"].includes(current)) ? "tasks" : current);
   drawTasks();
   drawReports();
   if (!admin) drawExtras();
@@ -631,7 +635,91 @@ async function refresh() {
     return [user.name,user.id,user.active?"Active":"Disabled",actions];
   }),"Add an employee to start assigning tasks.");
 }
-for (const control of $$("[data-view]")) control.addEventListener("click",()=>show(control.dataset.view));
+for (const control of $$("[data-view]")) control.addEventListener("click",()=>{
+  show(control.dataset.view);
+  if (current === "attendance") {
+    const employees = state.users.filter(user=>user.active).map(user=>[user.id,user.name+" ("+user.id+")"]);
+    setOptions("#attendance-person",employees);
+    $("#attendance-person").options[0].textContent = "Choose employee";
+    setOptions("#attendance-filter",employees);
+    $('#attendance-form input[name="date"]').value ||= state.today;
+    $("#attendance-month").value ||= state.today.slice(0,7);
+    loadAttendance();
+  }
+});
+const attendanceLabels = {
+  Off:"Off / Leave",
+  "First half":"Half day · 1st half",
+  "Second half":"Half day · 2nd half",
+  Permission:"Permission"
+};
+function drawAttendance() {
+  const employee = $("#attendance-filter").value;
+  const rows = attendanceRows.filter(row=>!employee || row.user_id === employee)
+    .sort((a,b)=>b.date.localeCompare(a.date) || a.name.localeCompare(b.name));
+  const counts = {Off:0,"First half":0,"Second half":0,Permission:0};
+  for (const row of rows) if (Object.hasOwn(counts,row.status)) counts[row.status]++;
+  const summary = [
+    ["Off / Leave",counts.Off],
+    ["Half days",counts["First half"]+counts["Second half"]],
+    ["Permissions",counts.Permission]
+  ];
+  $("#attendance-counts").replaceChildren(...summary.map(([label,count])=>{
+    const card = element("div",undefined,"stat");
+    card.append(element("span",label),element("strong",count));
+    if (label === "Half days") card.append(element("span",counts["First half"]+" first half · "+counts["Second half"]+" second half"));
+    return card;
+  }));
+  table($("#attendance-records"),["Date","Day","Employee","Status","Manage"],rows.map(row=>[
+    row.date,row.day,row.name,tag(attendanceLabels[row.status] || row.status),button("Edit",()=>{
+      const form = $("#attendance-form");
+      form.elements.user_id.value = row.user_id;
+      form.elements.date.value = row.date;
+      form.elements.status.value = row.status;
+      form.elements.status.focus();
+    })
+  ]),"No attendance records for this selection.");
+}
+async function loadAttendance() {
+  const request = ++attendanceRequest;
+  const month = $("#attendance-month").value;
+  attendanceRows = [];
+  $("#attendance-counts").replaceChildren();
+  $("#attendance-records").textContent = month ? "Loading attendance…" : "Choose a month.";
+  if (!month) return;
+  try {
+    const result = await api("attendance/list",{month});
+    if (request !== attendanceRequest || current !== "attendance") return;
+    attendanceRows = result.records;
+    drawAttendance();
+  } catch (error) {
+    if (request === attendanceRequest) $("#attendance-records").textContent = error.message;
+  }
+}
+$("#attendance-month").addEventListener("change",loadAttendance);
+$("#attendance-filter").addEventListener("change",()=>{
+  if ($("#attendance-counts").childElementCount) drawAttendance();
+});
+$("#attendance-form").addEventListener("submit",async event=>{
+  event.preventDefault();
+  const submit = event.submitter;
+  const feedback = $("#attendance-feedback");
+  const record = Object.fromEntries(new FormData(event.currentTarget));
+  submit.disabled = true;
+  feedback.textContent = "";
+  try {
+    await api("attendance/save",record);
+    if (current !== "attendance") return;
+    feedback.textContent = "Attendance saved.";
+    $("#attendance-month").value = record.date.slice(0,7);
+    $("#attendance-filter").value = record.user_id;
+    await loadAttendance();
+  } catch (error) {
+    feedback.textContent = error.message;
+  } finally {
+    submit.disabled = false;
+  }
+});
 for (const control of $$("[data-close]")) control.addEventListener("click",()=>control.closest("dialog").close());
 $("#password-button").addEventListener("click",()=>$("#password-dialog").showModal());
 $("#task-period").addEventListener("change",()=>{
@@ -838,6 +926,8 @@ $("#logout").addEventListener("click",async()=>{
   try { await api("logout",{}); }
   catch (error) { if (state) return $("#notice").textContent=error.message; }
   state = undefined;
+  attendanceRows = [];
+  for (const id of ["attendance-person","attendance-filter","attendance-counts","attendance-records","attendance-feedback"]) $("#"+id).replaceChildren();
   selected.clear();
   $("#batch-fields").replaceChildren();
   $("#suggestion-list").replaceChildren();

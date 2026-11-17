@@ -13,7 +13,9 @@
 const SHEET_ID = "";            // empty = use the sheet this script was opened from. Or paste another sheet's ID here (the long code in its link between /d/ and /edit)
 const TZ = "Asia/Kolkata";
 const STATUSES = ["Pending", "In progress", "Done", "Delayed"];
+const ATTENDANCE_TYPES = ["Off", "First half", "Second half", "Permission"];
 const H = {
+  Attendance: ["Date", "Day", "UserID", "Name", "Status"],
   Users: ["UserID", "Name", "Role", "Active", "SheetName", "Created"],
   Config: ["Setting", "Value"],
   "Project List": ["Type", "ID", "Project", "Subtask"],   // Type = Project | Subtask | Common
@@ -297,6 +299,42 @@ function handle_(action, d, token) {
   const findProject = function (name) { return rowsOf_("Project").filter(function (r) { return lc_(r.Project) === lc_(name); })[0]; };
 
   switch (action) {
+    case "attendance/list": {
+      const month = clean_(d.month, 7);
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return fail_("Choose a valid month.", 400);
+      const members = new Set(read_(usersSh).filter(function (r) {
+        return r.Role === "employee" && r.Active === "1";
+      }).map(function (r) { return r.UserID; }));
+      const records = read_(sheet_("Attendance", H.Attendance)).filter(function (r) {
+        return members.has(r.UserID) && r.Date.startsWith(month + "-");
+      }).map(function (r) {
+        return {date:r.Date, day:r.Day, user_id:r.UserID, name:r.Name, status:r.Status};
+      });
+      return ok_({records:records});
+    }
+    case "attendance/save": {
+      const date = d.date;
+      if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return fail_("Choose a valid date.", 400);
+      const parsed = new Date(date + "T00:00:00Z");
+      if (!Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) return fail_("Choose a valid date.", 400);
+      if (!ATTENDANCE_TYPES.includes(d.status)) return fail_("Choose an attendance status.", 400);
+      const user = read_(usersSh).find(function (r) {
+        return r.UserID === d.user_id && r.Role === "employee" && r.Active === "1";
+      });
+      if (!user) return fail_("Choose an active employee.", 404);
+      const sh = sheet_("Attendance", H.Attendance);
+      const existing = read_(sh).find(function (r) { return r.Date === date && r.UserID === user.UserID; });
+      const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      const record = {Date:date, Day:days[parsed.getUTCDay()], UserID:user.UserID, Name:user.Name, Status:d.status};
+      if (existing) {
+        record._row = existing._row;
+        put_(sh, H.Attendance, record);
+      } else {
+        append_(sh, H.Attendance, record);
+      }
+      return ok_();
+    }
+
     case "project": {
       const name = clean_(d.name, 100);
       if (!name) return fail_("Enter a project name.", 400);
@@ -380,6 +418,13 @@ function handle_(action, d, token) {
       if (tab) { u.SheetName = tabName_(u.SheetName.slice(0, 50) + " (archived)", stamp); tab.setName(u.SheetName); }
       const logSh = sheet_("UpdateLog", H.UpdateLog), oldId = u.UserID;
       read_(logSh).filter(function (r) { return r.UserID === oldId; }).forEach(function (r) { r.UserID = oldId + "~" + stamp; put_(logSh, H.UpdateLog, r); });
+      const attendance = ss_().getSheetByName("Attendance");
+      if (attendance) read_(attendance).filter(function (r) {
+        return r.UserID === oldId;
+      }).forEach(function (r) {
+        r.UserID = oldId + "~" + stamp;
+        put_(attendance, H.Attendance, r);
+      });
       u.UserID = u.UserID + "~" + stamp; u.Active = "-1";
       put_(usersSh, H.Users, u);
       return ok_();
