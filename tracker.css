@@ -125,3 +125,54 @@ dialog{width:min(460px,calc(100% - 26px));border:1px solid var(--line);border-ra
 }
 
 #batch-feedback:empty { display:none; }
+
+.common-subtasks form[data-action="common-subtask/apply"] .horizontal-project-list {
+  gap:8px;
+}
+.common-subtasks .horizontal-project-list .task-choice {
+  position:relative;
+  max-width:100%;
+}
+.common-subtasks .horizontal-project-list .task-choice input {
+  position:absolute;
+  width:1px;
+  height:1px;
+  margin:0;
+  clip-path:inset(50%);
+}
+.common-subtasks .horizontal-project-list .task-choice span {
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  min-height:36px;
+  padding:5px 11px;
+  border:1px solid #3c4851;
+  border-radius:999px;
+  background:#222a30;
+  color:#dce5ea;
+}
+.common-subtasks .horizontal-project-list .task-choice span::before {
+  content:"";
+  width:11px;
+  height:11px;
+  flex-shrink:0;
+}
+.common-subtasks .horizontal-project-list .task-choice:hover span {
+  border-color:#73d7ab;
+}
+.common-subtasks .horizontal-project-list .task-choice input:checked + span {
+  border-color:#73d7ab;
+  background:#203c31;
+  color:#b8f2d7;
+}
+.common-subtasks .horizontal-project-list .task-choice input:checked + span::before {
+  width:9px;
+  height:5px;
+  border:solid currentColor;
+  border-width:0 0 2px 2px;
+  transform:translateY(-1px) rotate(-45deg);
+}
+.common-subtasks .horizontal-project-list .task-choice input:focus-visible + span {
+  outline:2px solid #73d7ab;
+  outline-offset:2px;
+}
