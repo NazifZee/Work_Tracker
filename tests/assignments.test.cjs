@@ -105,7 +105,7 @@ put_ = (sheet,headers,row)=>db[sheet===attendanceSheet?'Attendance':sheet][row._
 assert.equal(attendance('save',{...record,date:'2026-02-30'}).status,400);
 assert.ok(attendance('save',record).data);
 assert.equal(attendance('list',{month:'2026-11'}).data.records[0].day,'Tuesday');
-assert.ok(attendance('save',{...record,status:'Permission'}).data);
+assert.ok(attendance('save',{...record,status:'Permission',hours:1.5}).data);
 const records = attendance('list',{month:'2026-11'}).data.records;
 assert.equal(records.length,1);
 assert.equal(records[0].status,'Permission');
@@ -147,3 +147,14 @@ assert.equal(weekendLeave.end_date,'2026-11-16');
 assert.equal(weekendLeave.weekdays.join(','),'Saturday,Monday');
 assert.equal(attendance('save',{...record,status:'Work from home',date:'2026-11-22'}).data.days,1);
 console.log('Passed: leave excludes Sunday while other attendance statuses still count it.');
+
+assert.equal(attendance('save',{...record,status:'Permission',date:'2026-12-14',end_date:'2026-12-16',hours:1.5}).data.days,3);
+const permission = attendance('list',{month:'2026-12'}).data.records.find(row=>row.date==='2026-12-14');
+assert.equal(permission.hours,4.5);
+assert.equal(permission.hours_per_day,1.5);
+assert.equal(permission.missing_hours,0);
+assert.equal(attendance('save',{...record,status:'Permission',hours:0}).status,400);
+assert.equal(attendance('save',{...record,status:'Permission',hours:25}).status,400);
+assert.equal(attendance('save',{...record,status:'Permission',hours:'bad'}).status,400);
+assert.equal(attendance('save',{...record,status:'Permission',hours:1.001}).status,400);
+console.log('Passed: permission hours persist, total by period, and reject invalid input.');

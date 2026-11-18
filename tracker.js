@@ -667,6 +667,7 @@ function editAttendance(row) {
     form.elements.end_date.value = row.end_date;
     form.elements.status.value = row.status;
     form.elements.notes.value = row.notes;
+    form.elements.hours.value = row.hours_per_day ?? "";
   }
   $("#attendance-form-title").textContent = row ? "Edit attendance" : "Record attendance";
   $("#attendance-save").textContent = row ? "Save changes" : "Save attendance";
@@ -695,9 +696,15 @@ function drawAttendance() {
   $("#attendance-counts").replaceChildren(...Object.entries(counts).map(([status,count])=>{
     const card = element("div",undefined,"stat");
     card.append(element("span",attendanceLabels[status]),element("strong",count));
+    if (status === "Permission") {
+      const totalHours = rows.reduce((sum,row)=>sum + (row.status === "Permission" ? row.hours || 0 : 0),0);
+      const missing = rows.reduce((sum,row)=>sum + (row.missing_hours || 0),0);
+      card.append(element("span",Number(totalHours.toFixed(2))+" hrs total"));
+      if (missing) card.append(element("small",missing+" days without recorded hours"));
+    }
     return card;
   }));
-  table($("#attendance-records"),["From date","To date","Days in period","Weekdays","Employee","Status","Notes","Manage"],rows.map(row=>{
+  table($("#attendance-records"),["From date","To date","Days in period","Weekdays","Employee","Status","Permission hours","Notes","Manage"],rows.map(row=>{
     const actions = element("div",undefined,"editor-actions");
     actions.append(button("Edit",()=>editAttendance(row)));
     const remove = button("Delete",async()=>{
@@ -719,7 +726,7 @@ function drawAttendance() {
     const weekdays = row.weekdays || [];
     const weekLength = row.status === "Off" ? 6 : 7;
     const dayNames = row.count < weekLength ? weekdays.join(", ") : "";
-    return [row.date,row.end_date,attendanceDuration(row.count,row.status),dayNames || "—",row.name,tag(row.status==="Off" ? attendanceLabels.Off : row.status),row.notes || "—",actions];
+    return [row.date,row.end_date,attendanceDuration(row.count,row.status),dayNames || "—",row.name,tag(row.status==="Off" ? attendanceLabels.Off : row.status),row.status === "Permission" ? (row.missing_hours ? "Not recorded" : Number((row.hours || 0).toFixed(2))+" hrs") : "—",row.notes || "—",actions];
   }),"No attendance records for this selection.");
 }
 function attendanceMonths() {
@@ -772,6 +779,10 @@ $("#attendance-filter").addEventListener("change",()=>{
 function syncAttendanceRange() {
   const form = $("#attendance-form");
   form.elements.end_date.min = form.elements.date.value;
+  const permission = form.elements.status.value === "Permission";
+  $("#attendance-hours-field").hidden = !permission;
+  form.elements.hours.disabled = !permission;
+  form.elements.hours.required = permission;
 }
 $("#attendance-cancel").addEventListener("click",()=>{
   $("#attendance-form").reset();

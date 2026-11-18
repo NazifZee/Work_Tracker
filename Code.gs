@@ -15,7 +15,7 @@ const TZ = "Asia/Kolkata";
 const STATUSES = ["Pending", "In progress", "Done", "Delayed"];
 const ATTENDANCE_TYPES = ["Off", "First half", "Second half", "Half day", "Permission", "Work from home"];
 const H = {
-  Attendance: ["Date", "Day", "UserID", "Name", "Status", "Notes", "RecordID"],
+  Attendance: ["Date", "Day", "UserID", "Name", "Status", "Notes", "RecordID", "Hours"],
   Users: ["UserID", "Name", "Role", "Active", "SheetName", "Created"],
   Config: ["Setting", "Value"],
   "Project List": ["Type", "ID", "Project", "Subtask"],   // Type = Project | Subtask | Common
@@ -531,6 +531,9 @@ function attendance_(action, d, usersSh) {
       records.push({id:id,date:first.Date,end_date:last.Date,day:first.Day,days:group.length,count:count,
         weekdays:counted.length <= 6 ? counted.map(function (row) { return row.Day; }) : [],
         user_id:first.UserID,name:first.Name,status:/^(First|Second) half$/.test(first.Status) ? "Half day" : first.Status,
+        hours_per_day:first.Hours === undefined || first.Hours === "" ? null : Number(first.Hours),
+        hours:counted.reduce(function (sum,row) { return sum + (Number(row.Hours) || 0); },0),
+        missing_hours:first.Status === "Permission" ? counted.filter(function (row) { return !Number(row.Hours); }).length : 0,
         notes:first.Notes || ""});
     });
     return ok_({records:records});
@@ -553,6 +556,10 @@ function attendance_(action, d, usersSh) {
   const dayMs = 86400000;
   if (!start || !end || end < start || end - start >= 366 * dayMs) return fail_("Choose a valid date range of up to 366 days.", 400);
   if (!ATTENDANCE_TYPES.includes(d.status)) return fail_("Choose an attendance status.", 400);
+  const hours = d.status === "Permission" ? Number(d.hours) : "";
+  if (d.status === "Permission" && (!Number.isFinite(hours) || hours <= 0 || hours > 24 || Math.abs(hours * 100 - Math.round(hours * 100)) > 0.000001)) {
+    return fail_("Enter permission hours greater than 0 and up to 24 per day (up to two decimals).", 400);
+  }
   const user = members.get(d.user_id);
   if (!user) return fail_("Choose an active employee.", 404);
 
@@ -566,7 +573,7 @@ function attendance_(action, d, usersSh) {
   }
   if (overlap.length) return fail_("This employee already has attendance in that range. Edit the existing record or choose different dates.", 409);
 
-  sh.getRange(1, 6, 1, 2).setValues([H.Attendance.slice(5)]);
+  sh.getRange(1, 6, 1, 3).setValues([H.Attendance.slice(5)]);
   const id = original.length && original[0].RecordID || String(nextId_());
   const notes = clean_(d.notes, 1000);
   const safeNotes = notes.startsWith("=") ? "'" + notes : notes;
@@ -574,7 +581,7 @@ function attendance_(action, d, usersSh) {
   const values = [];
   for (let time = start.getTime(); time <= end.getTime(); time += dayMs) {
     const date = new Date(time);
-    values.push([date.toISOString().slice(0,10),days[date.getUTCDay()],user.UserID,user.Name,d.status,safeNotes,id]);
+    values.push([date.toISOString().slice(0,10),days[date.getUTCDay()],user.UserID,user.Name,d.status,safeNotes,id,hours]);
   }
   const first = sh.getLastRow() + 1;
   const required = first + values.length - 1;

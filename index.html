@@ -122,6 +122,10 @@
           <option value="Work from home">Work from home</option>
         </select></label>
       </div>
+      <label id="attendance-hours-field" hidden>Permission hours per day
+        <input type="number" name="hours" min="0.01" max="24" step="0.01" placeholder="e.g. 1.5" disabled>
+        <small>For a date range, these hours apply to each day.</small>
+      </label>
       <label>Notes<textarea name="notes" rows="2" maxlength="1000" placeholder="Reason or details"></textarea></label>
       <div class="editor-actions">
         <button class="primary" id="attendance-save">Save attendance</button>
