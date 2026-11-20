@@ -288,3 +288,30 @@ dialog{width:min(460px,calc(100% - 26px));border:1px solid var(--line);border-ra
   :root[data-theme="light"] .stat:nth-child(3) strong { color:#1b6247; }
   :root[data-theme="light"] .stat:nth-child(4) strong { color:#78501d; }
 }
+/* Keep names and dates intact while notes wrap at readable widths. */
+@media screen {
+  .subtask-table table { min-width:1080px; table-layout:fixed; font-weight:400; }
+  .subtask-table th,.subtask-table td { padding:12px; text-align:left; line-height:1.6; }
+  .subtask-table th { font-size:12px; font-weight:600; white-space:normal; word-break:normal; overflow-wrap:normal; }
+  .subtask-table td { font-weight:400; white-space:pre-wrap; overflow-wrap:break-word; word-break:normal; }
+  .subtask-table th:nth-child(1) { width:150px; }
+  .subtask-table th:nth-child(2) { width:115px; }
+  .subtask-table th:nth-child(3) { width:120px; }
+  .subtask-table th:nth-child(n+4) { width:200px; }
+  .subtask-table td:nth-child(1) { font-weight:600; }
+  .subtask-table td:nth-child(3) { white-space:nowrap; }
+  .user-body> .scroll>table>thead>tr>th { white-space:nowrap; }
+  .user-body> .scroll>table>tbody>tr>td:nth-child(n+2):nth-child(-n+7) { white-space:nowrap; overflow-wrap:normal; }
+}
+@media screen {
+  .project-task-table>thead>tr>th { white-space:nowrap; }
+  .project-task-table>tbody>tr:not(.project-subtask-row)>td { white-space:nowrap; overflow-wrap:normal; }
+  .project-task-table>tbody>tr:not(.project-subtask-row)>td:first-child { min-width:180px; white-space:normal; }
+  .project-task-table>tbody>tr:not(.project-subtask-row)>td:nth-last-child(2) { white-space:pre-wrap; min-width:160px; }
+  .project-task-table>tbody>tr.project-subtask-row>td { padding:8px 0 20px; font-weight:400; white-space:normal; }
+  .project-subtask-row details>summary { margin:0 12px 10px; font-weight:600; }
+  .project-subtask-row .subtask-table { width:100%; }
+  .project-subtask-row .subtask-table table { width:100%; }
+  .project-subtask-row .subtask-table th:nth-child(n+4) { width:auto; }
+  .project-subtask-row .subtask-table td:nth-child(n+4) { min-width:180px; }
+}

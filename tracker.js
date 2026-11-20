@@ -71,10 +71,25 @@ function table(container, headers, rows, empty) {
   const body = grid.createTBody();
   for (const row of rows) {
     const line = body.insertRow();
+    let subtaskDetails;
     for (const item of row) {
       const cell = line.insertCell();
-      if (item instanceof Node) cell.append(item);
+      if (item instanceof Node) {
+        if (item instanceof Element && item.classList.contains("project-with-subtasks")) {
+          subtaskDetails = item.querySelector("details");
+          subtaskDetails?.remove();
+          grid.classList.add("project-task-table");
+        }
+        cell.append(item);
+      }
       else cell.textContent = item;
+    }
+    if (subtaskDetails) {
+      const detailRow = body.insertRow();
+      detailRow.className = "project-subtask-row";
+      const cell = detailRow.insertCell();
+      cell.colSpan = headers.length;
+      cell.append(subtaskDetails);
     }
   }
   scroll.append(grid);
@@ -121,12 +136,12 @@ function taskRows(tasks, hideName = false, editable = false, report = false) {
     }
     const steps = state.progress.filter(step=>step.task_id===task.id && (report || state.user.role !== "admin" || !$("#subtask-filter").value || String(step.id)===$("#subtask-filter").value));
     if (steps.length && !editable) {
-      const group = element("div",undefined,"stack");
+      const group = element("div",undefined,"stack project-with-subtasks");
       group.append(row[1] instanceof Node ? row[1] : element("span",row[1]));
       const details = element("details");
       details.open = state.user.role === "admin";
       details.append(element("summary","Subtasks ("+steps.length+")"));
-      const subtaskTable = element("div");
+      const subtaskTable = element("div",undefined,"subtask-table");
       table(subtaskTable,["Subtask","Status","Last update","Pending work","Current work","Finished work","Earlier delayed notes"],steps.map(step=>[
         step.name,tag(step.status),step.updated || "No update yet",...subtaskNoteCells(step),
       ]),"No subtasks.");
